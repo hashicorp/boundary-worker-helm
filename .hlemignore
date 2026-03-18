@@ -1,0 +1,12 @@
+# Ignore VCS and CI metadata
+.git/
+.github/
+
+# Ignore local/editor artifacts
+.DS_Store
+*.swp
+*.tmp
+*.bak
+
+# Ignore Helm chart archives
+*.tgz
