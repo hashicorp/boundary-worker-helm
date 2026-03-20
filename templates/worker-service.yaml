@@ -1,0 +1,48 @@
+{{- if .Values.worker.service.proxy.enabled }}
+# Boundary Worker Proxy Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "boundary.worker.proxy.serviceName" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.worker.service.proxy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.worker.service.proxy.type }}
+  ports:
+    - port: {{ .Values.worker.service.proxy.port }}
+      targetPort: {{ .Values.worker.service.proxy.targetPort }}
+      protocol: TCP
+      name: proxy
+  selector:
+    {{- include "boundary.worker.selectorLabels" . | nindent 4 }}
+{{- end }}
+
+---
+{{- if .Values.worker.service.ops.enabled }}
+# Boundary Worker Ops Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "boundary.worker.ops.serviceName" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.worker.service.ops.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.worker.service.ops.type }}
+  ports:
+    - port: {{ .Values.worker.service.ops.port }}
+      targetPort: {{ .Values.worker.service.ops.targetPort }}
+      protocol: TCP
+      name: ops
+{{- end }}
+  selector:
+    {{- include "boundary.worker.selectorLabels" . | nindent 4 }}
