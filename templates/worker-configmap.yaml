@@ -1,0 +1,13 @@
+# Boundary Worker ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "boundary.worker.configmapName" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+data:
+  boundary-worker.hcl: |
+{{- if .Values.worker.config }}
+{{ tpl .Values.worker.config . | indent 4 }}
+{{- end }}

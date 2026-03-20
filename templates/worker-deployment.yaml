@@ -1,0 +1,130 @@
+# Boundary Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "boundary.worker.deploymentName" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1  # Workers are not scaled horizontally
+  selector:
+    matchLabels:
+      {{- include "boundary.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/worker-configmap.yaml") . | sha256sum }}
+        checksum/values: {{ toJson .Values.worker | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "boundary.worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default 7200 }}  # 2 hours grace period for graceful shutdown
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: volume-permissions
+          image: busybox
+          command:
+            - sh
+            - -c
+            - >-
+              mkdir -p {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }} {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }} &&
+              chown -R 100:1000 {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }} {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
+          volumeMounts:
+            {{- if .Values.worker.persistence.recording.enabled }}
+            - name: recording-storage
+              mountPath: {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}
+            {{- end }}
+            {{- if .Values.worker.persistence.authStorage.enabled }}
+            - name: auth-storage
+              mountPath: {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
+            {{- end }}
+          securityContext:
+            runAsUser: 0
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SKIP_SETCAP
+              value: "1"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Substitute environment variables and convert POD_NAME to lowercase
+              export POD_NAME_LOWER=$(echo $POD_NAME | tr '[:upper:]' '[:lower:]')
+              sed "s/\${POD_NAME_LOWER}/$POD_NAME_LOWER/g" /etc/boundary/boundary-worker.hcl > /tmp/boundary-worker-processed.hcl
+              exec boundary server -config=/tmp/boundary-worker-processed.hcl
+          ports:
+            - name: proxy
+              containerPort: 9202
+              protocol: TCP
+            - name: ops
+              containerPort: 9203
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/boundary
+              readOnly: true
+            - name: auth-storage
+              mountPath: {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
+            {{- if .Values.worker.persistence.recording.enabled }}
+            - name: recording-storage
+              mountPath: {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "boundary.worker.configmapName" . }}
+        {{- if .Values.worker.persistence.authStorage.enabled }}
+        - name: auth-storage
+          persistentVolumeClaim:
+            claimName: {{ include "boundary.worker.authStoragePvcName" . }}
+        {{- else }}
+        - name: auth-storage
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.worker.persistence.recording.enabled }}
+        - name: recording-storage
+          persistentVolumeClaim:
+            claimName: {{ include "boundary.worker.recordingPvcName" . }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: boundary-worker
+description: A Helm chart for HashiCorp Boundary Worker deployment
+type: application
+version: 0.1.0
+appVersion: "0.20.0"
+keywords:
+  - boundary
+  - hashicorp
+  - identity
+  - access
+  - security
+home: https://www.boundaryproject.io/
+icon: https://www.hashicorp.com/img/logo-hashicorp.svg
+sources:
+  - https://github.com/hashicorp/boundary
+maintainers:
+  - name: Your Name
+    email: your.email@example.com

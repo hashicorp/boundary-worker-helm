@@ -1,0 +1,37 @@
+{{- if .Values.worker.persistence.recording.enabled }}
+# Boundary Worker Recording PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "boundary.worker.recordingPvcName" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+    storage-type: recording
+spec:
+  accessModes:
+    - {{ .Values.worker.persistence.recording.accessMode }}
+  storageClassName: {{ .Values.worker.persistence.recording.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.persistence.recording.size }}
+---
+{{- if .Values.worker.persistence.authStorage.enabled }}
+# Boundary Worker Auth Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "boundary.worker.authStoragePvcName" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+    storage-type: auth
+spec:
+  accessModes:
+    - {{ .Values.worker.persistence.authStorage.accessMode }}
+  storageClassName: {{ .Values.worker.persistence.authStorage.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.persistence.authStorage.size }}
+{{- end }}
+{{- end }}

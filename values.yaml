@@ -1,0 +1,54 @@
+# Default values for Boundary Worker Helm Chart
+
+# Boundary image configuration
+image:
+  repository: hashicorp/boundary-enterprise
+  tag: "0.21-ent"
+  pullPolicy: IfNotPresent
+
+# Worker configuration
+worker:
+  config: ""
+  terminationGracePeriodSeconds: 90  # Default: 2 hours
+  service:
+    proxy:
+      enabled: true
+      type: LoadBalancer
+      port: 9202
+      targetPort: 9202
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+        service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    ops:
+      enabled: true
+      type: ClusterIP
+      port: 9203
+      targetPort: 9203
+      annotations: {}
+  resources:
+    limits:
+      cpu: 200m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  persistence:
+    recording:
+      size: "10Gi"
+      accessMode: ReadWriteOnce
+      storageClass: "gp2"
+      enabled: true
+      path: "/boundary/recording"
+    authStorage:
+      enabled: true
+      size: "1Gi"
+      accessMode: ReadWriteOnce
+      storageClass: "gp2"
+      path: "/var/lib/boundary"
+
+# Pod security context
+podSecurityContext:
+  runAsUser: 100
+  runAsGroup: 1000
