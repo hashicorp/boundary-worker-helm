@@ -1,0 +1,68 @@
+name: Test
+
+on:
+  push:
+    branches: [ yash/actions ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Print test message
+        run: |
+          echo "================================"
+          echo "Running test job for boundary-worker-helm"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "================================"
+      
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      
+      - name: Verify Helm installation
+        run: |
+          echo "Helm version:"
+          helm version
+          echo ""
+      
+      - name: Verify Helm chart structure
+        run: |
+          echo "Checking Helm chart files..."
+          ls -la
+          echo ""
+          echo "Chart.yaml exists: $(test -f Chart.yaml && echo 'Yes' || echo 'No')"
+          echo "values.yaml exists: $(test -f values.yaml && echo 'Yes' || echo 'No')"
+          echo "templates/ directory exists: $(test -d templates && echo 'Yes' || echo 'No')"
+          echo ""
+      
+      - name: Helm Lint
+        run: |
+          echo "Running Helm lint..."
+          helm lint .
+          echo " Helm lint passed!"
+      
+      - name: Helm Template (Dry Run)
+        run: |
+          echo "Running Helm template to validate chart rendering..."
+          helm template boundary-worker . --debug
+          echo ""
+          echo " Helm template validation passed!"
+      
+      - name: Test Summary
+        run: |
+          echo "================================"
+          echo " All tests completed successfully!"
+          echo "================================"
+          echo "Tests performed:"
+          echo "  ✓ Chart structure verification"
+          echo "  ✓ Helm lint validation"
+          echo "  ✓ Helm template rendering"
+          echo "================================"
