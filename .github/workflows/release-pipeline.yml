@@ -7,24 +7,26 @@ on:
 jobs:
   lint:
     name: Lint
-    uses: ./.github/workflows/release-jobs/lint.yml
+    uses: ./.github/workflows/lint-job.yml
   
   test:
     name: Test
     needs: lint
-    uses: ./.github/workflows/release-jobs/unit-test.yml
+    uses: ./.github/workflows/unit-test-job.yml
   
   integration:
     name: Integration Test
     needs: test
-    uses: ./.github/workflows/release-jobs/integration-test.yml
+    uses: ./.github/workflows/integration-test-job.yml
   
   acceptance:
     name: Acceptance Test
     needs: integration
-    uses: ./.github/workflows/release-jobs/acceptance-test.yml
+    uses: ./.github/workflows/acceptance-test-job.yml
   
   release:
     name: Release
     needs: acceptance
-    uses: ./.github/workflows/release-jobs/release.yml
+    uses: ./.github/workflows/release-job.yml
+
+
