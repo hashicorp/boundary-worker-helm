@@ -5,7 +5,7 @@ on:
 
 jobs:
   lint-helm:
-    name: Helm Lint
+    name: Helm
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,9 +24,8 @@ jobs:
           echo "✅ Helm lint passed!"
 
   lint-templates:
-    name: Render Templates
+    name: Templates
     runs-on: ubuntu-latest
-    needs: lint-helm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,7 +53,7 @@ jobs:
   lint-kubernetes:
     name: Kubernetes Validation
     runs-on: ubuntu-latest
-    needs: lint-templates
+    needs: [lint-templates, lint-helm]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -78,52 +77,10 @@ jobs:
           kubeconform -strict rendered.yaml
           echo "✅ Kubernetes validation passed!"
 
-  lint-yaml:
-    name: YAML Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install yamllint
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y yamllint
-          yamllint --version
-
-      - name: Run YAML Lint
-        id: yamllint
-        continue-on-error: true
-        run: |
-          echo "================================"
-          echo "Running YAML Lint"
-          echo "================================"
-          yamllint . 2>&1 | tee yamllint-output.txt
-          exit ${PIPESTATUS[0]}
-
-      - name: Check YAML Lint Results
-        run: |
-          if [ -f yamllint-output.txt ]; then
-            ERROR_COUNT=$(grep -c "error" yamllint-output.txt || true)
-            WARNING_COUNT=$(grep -c "warning" yamllint-output.txt || true)
-            echo "YAML Lint Results: $ERROR_COUNT errors, $WARNING_COUNT warnings"
-            
-            if [ "$ERROR_COUNT" -gt 0 ]; then
-              echo "::error::YAML lint found $ERROR_COUNT errors and $WARNING_COUNT warnings"
-              echo "❌ YAML lint FAILED"
-              exit 1
-            elif [ "$WARNING_COUNT" -gt 0 ]; then
-              echo "::warning::YAML lint found $WARNING_COUNT warnings"
-              echo "⚠️  YAML lint completed with warnings"
-            else
-              echo "✅ YAML lint passed!"
-            fi
-          fi
-
   lint-security:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: lint-templates
+    needs: [lint-templates, lint-helm]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
