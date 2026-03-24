@@ -1,0 +1,30 @@
+name: Release Pipeline
+
+on:
+  push:
+    branches: [ yash/actions ]
+
+jobs:
+  lint:
+    name: Lint
+    uses: ./.github/workflows/release-jobs/lint.yml
+  
+  test:
+    name: Test
+    needs: lint
+    uses: ./.github/workflows/release-jobs/unit-test.yml
+  
+  integration:
+    name: Integration Test
+    needs: test
+    uses: ./.github/workflows/release-jobs/integration-test.yml
+  
+  acceptance:
+    name: Acceptance Test
+    needs: integration
+    uses: ./.github/workflows/release-jobs/acceptance-test.yml
+  
+  release:
+    name: Release
+    needs: acceptance
+    uses: ./.github/workflows/release-jobs/release.yml

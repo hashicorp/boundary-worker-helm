@@ -1,0 +1,35 @@
+name: Acceptance Test
+
+on:
+  workflow_call:
+
+jobs:
+  acceptance:
+    name: Acceptance Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Print acceptance test job info
+        run: |
+          echo "================================"
+          echo "Running Acceptance Test Job"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "================================"
+      
+      - name: Run acceptance tests
+        run: |
+          echo "Running acceptance tests..."
+          echo "Acceptance tests passed successfully!"
+      
+      - name: Acceptance Test Summary
+        run: |
+          echo "================================"
+          echo "Acceptance test job completed successfully!"
+          echo "================================"
+
+

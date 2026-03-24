@@ -1,0 +1,115 @@
+name: Lint
+
+on:
+  workflow_call:
+
+jobs:
+  lint:
+    name: Lint Helm Chart
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Print lint job info
+        run: |
+          echo "================================"
+          echo "Running Lint Job"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "================================"
+      
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      
+      - name: Verify Helm installation
+        run: |
+          echo "Helm version:"
+          helm version
+          echo ""
+      
+      - name: Verify Helm chart structure
+        run: |
+          echo "Checking Helm chart files..."
+          ls -la
+          echo ""
+          echo "Chart.yaml exists: $(test -f Chart.yaml && echo 'Yes' || echo 'No')"
+          echo "values.yaml exists: $(test -f values.yaml && echo 'Yes' || echo 'No')"
+          echo "templates/ directory exists: $(test -d templates && echo 'Yes' || echo 'No')"
+          echo ""
+      
+      - name: 1. Run Helm Lint
+        run: |
+          echo "Step 1: Running Helm lint..."
+          helm lint .
+          echo ""
+          echo "Helm lint passed!"
+      
+      - name: 2. Render Templates
+        run: |
+          echo "Step 2: Rendering Helm templates..."
+          helm template boundary-worker . > rendered.yaml
+          echo "Templates rendered successfully!"
+          echo "Rendered file size: $(wc -l < rendered.yaml) lines"
+      
+      - name: 3. Install Kubeconform
+        run: |
+          echo "Step 3: Installing Kubeconform..."
+          curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+          kubeconform -v
+      
+      - name: 3. Kubernetes Validation
+        run: |
+          echo "Step 3: Running Kubernetes validation with Kubeconform..."
+          kubeconform -strict rendered.yaml
+          echo "Kubernetes validation passed!"
+      
+      - name: 4. Install yamllint
+        run: |
+          echo "Step 4: Installing yamllint..."
+          sudo apt-get update
+          sudo apt-get install -y yamllint
+          yamllint --version
+      
+      - name: 4. YAML Lint
+        run: |
+          echo "Step 4: Running YAML lint..."
+          yamllint . || echo "YAML lint completed with warnings"
+          echo "YAML lint check completed!"
+      
+      - name: 5. Install Trivy
+        run: |
+          echo "Step 5: Installing Trivy..."
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          trivy --version
+      
+      - name: 5. Security Scan
+        run: |
+          echo "Step 5: Running security scan with Trivy..."
+          trivy config rendered.yaml
+          echo "Security scan completed!"
+      
+      - name: Lint Summary
+        run: |
+          echo "================================"
+          echo "All Lint Checks Completed!"
+          echo "================================"
+          echo "1. Helm lint - Passed"
+          echo "2. Template rendering - Passed"
+          echo "3. Kubernetes validation - Passed"
+          echo "4. YAML lint - Completed"
+          echo "5. Security scan - Completed"
+          echo "================================"
+          echo "Lint job completed successfully!"
+          echo "================================"
+
+
