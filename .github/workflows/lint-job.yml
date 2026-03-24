@@ -77,10 +77,33 @@ jobs:
           yamllint --version
       
       - name: 4. YAML Lint
+        id: yamllint
+        continue-on-error: true
         run: |
           echo "Step 4: Running YAML lint..."
-          yamllint . || echo "YAML lint completed with warnings"
-          echo "YAML lint check completed!"
+          yamllint . 2>&1 | tee yamllint-output.txt
+          exit ${PIPESTATUS[0]}
+      
+      - name: 4. Check YAML Lint Results
+        run: |
+          if [ -f yamllint-output.txt ]; then
+            ERROR_COUNT=$(grep -c "error" yamllint-output.txt || true)
+            WARNING_COUNT=$(grep -c "warning" yamllint-output.txt || true)
+            echo "YAML Lint Results: $ERROR_COUNT errors, $WARNING_COUNT warnings"
+            echo "YAMLLINT_ERRORS=$ERROR_COUNT" >> $GITHUB_ENV
+            echo "YAMLLINT_WARNINGS=$WARNING_COUNT" >> $GITHUB_ENV
+            
+            if [ "$ERROR_COUNT" -gt 0 ]; then
+              echo "::warning::YAML lint found $ERROR_COUNT errors and $WARNING_COUNT warnings"
+              echo "YAMLLINT_STATUS=FAILED" >> $GITHUB_ENV
+              exit 1
+            elif [ "$WARNING_COUNT" -gt 0 ]; then
+              echo "::warning::YAML lint found $WARNING_COUNT warnings"
+              echo "YAMLLINT_STATUS=WARNING" >> $GITHUB_ENV
+            else
+              echo "YAMLLINT_STATUS=PASSED" >> $GITHUB_ENV
+            fi
+          fi
       
       - name: 5. Install Trivy
         run: |
@@ -93,23 +116,87 @@ jobs:
           trivy --version
       
       - name: 5. Security Scan
+        id: trivy
+        continue-on-error: true
         run: |
           echo "Step 5: Running security scan with Trivy..."
-          trivy config rendered.yaml
-          echo "Security scan completed!"
+          trivy config rendered.yaml --exit-code 1 --severity HIGH,CRITICAL 2>&1 | tee trivy-output.txt
+          TRIVY_EXIT_CODE=${PIPESTATUS[0]}
+          echo "TRIVY_EXIT_CODE=$TRIVY_EXIT_CODE" >> $GITHUB_ENV
+          exit $TRIVY_EXIT_CODE
+      
+      - name: 5. Check Trivy Results
+        run: |
+          if [ -f trivy-output.txt ]; then
+            CRITICAL_COUNT=$(grep -c "CRITICAL:" trivy-output.txt || true)
+            HIGH_COUNT=$(grep -c "HIGH:" trivy-output.txt || true)
+            MEDIUM_COUNT=$(grep -c "MEDIUM:" trivy-output.txt || true)
+            LOW_COUNT=$(grep -c "LOW:" trivy-output.txt || true)
+            
+            echo "Security Scan Results:"
+            echo "  CRITICAL: $CRITICAL_COUNT"
+            echo "  HIGH: $HIGH_COUNT"
+            echo "  MEDIUM: $MEDIUM_COUNT"
+            echo "  LOW: $LOW_COUNT"
+            
+            if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+              echo "::error::Security scan found $CRITICAL_COUNT CRITICAL and $HIGH_COUNT HIGH severity issues"
+              echo "TRIVY_STATUS=FAILED" >> $GITHUB_ENV
+              exit 1
+            elif [ "$MEDIUM_COUNT" -gt 0 ] || [ "$LOW_COUNT" -gt 0 ]; then
+              echo "::warning::Security scan found $MEDIUM_COUNT MEDIUM and $LOW_COUNT LOW severity issues"
+              echo "TRIVY_STATUS=WARNING" >> $GITHUB_ENV
+            else
+              echo "TRIVY_STATUS=PASSED" >> $GITHUB_ENV
+            fi
+          fi
       
       - name: Lint Summary
+        if: always()
         run: |
           echo "================================"
-          echo "All Lint Checks Completed!"
+          echo "Lint Job Summary"
           echo "================================"
-          echo "1. Helm lint - Passed"
-          echo "2. Template rendering - Passed"
-          echo "3. Kubernetes validation - Passed"
-          echo "4. YAML lint - Completed"
-          echo "5. Security scan - Completed"
+          echo "1. Helm lint - ✅ PASSED"
+          echo "2. Template rendering - ✅ PASSED"
+          echo "3. Kubernetes validation - ✅ PASSED"
+          
+          YAMLLINT_STATUS="${YAMLLINT_STATUS:-UNKNOWN}"
+          if [ "$YAMLLINT_STATUS" = "PASSED" ]; then
+            echo "4. YAML lint - ✅ PASSED"
+          elif [ "$YAMLLINT_STATUS" = "WARNING" ]; then
+            echo "4. YAML lint - ⚠️  WARNING ($YAMLLINT_WARNINGS warnings)"
+          elif [ "$YAMLLINT_STATUS" = "FAILED" ]; then
+            echo "4. YAML lint - ❌ FAILED ($YAMLLINT_ERRORS errors, $YAMLLINT_WARNINGS warnings)"
+          else
+            echo "4. YAML lint - ❓ UNKNOWN"
+          fi
+          
+          TRIVY_STATUS="${TRIVY_STATUS:-UNKNOWN}"
+          if [ "$TRIVY_STATUS" = "PASSED" ]; then
+            echo "5. Security scan - ✅ PASSED"
+          elif [ "$TRIVY_STATUS" = "WARNING" ]; then
+            echo "5. Security scan - ⚠️  WARNING (MEDIUM/LOW issues found)"
+          elif [ "$TRIVY_STATUS" = "FAILED" ]; then
+            echo "5. Security scan - ❌ FAILED (CRITICAL/HIGH issues found)"
+          else
+            echo "5. Security scan - ❓ UNKNOWN"
+          fi
+          
           echo "================================"
-          echo "Lint job completed successfully!"
+          
+          # Determine overall status
+          if [ "$YAMLLINT_STATUS" = "FAILED" ] || [ "$TRIVY_STATUS" = "FAILED" ]; then
+            echo "Overall Status: ❌ FAILED"
+            echo "::error::Lint job failed due to critical issues"
+            exit 1
+          elif [ "$YAMLLINT_STATUS" = "WARNING" ] || [ "$TRIVY_STATUS" = "WARNING" ]; then
+            echo "Overall Status: ⚠️  COMPLETED WITH WARNINGS"
+            echo "::warning::Lint job completed with warnings"
+          else
+            echo "Overall Status: ✅ SUCCESS"
+            echo "Lint job completed successfully!"
+          fi
           echo "================================"
 
 
