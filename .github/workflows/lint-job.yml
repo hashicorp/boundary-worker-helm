@@ -7,11 +7,11 @@ jobs:
   lint:
     name: Lint Helm Chart
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Print lint job info
         run: |
           echo "================================"
@@ -21,17 +21,17 @@ jobs:
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit SHA: ${{ github.sha }}"
           echo "================================"
-      
+
       - name: Set up Helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-      
+
       - name: Verify Helm installation
         run: |
           echo "Helm version:"
           helm version
           echo ""
-      
+
       - name: Verify Helm chart structure
         run: |
           echo "Checking Helm chart files..."
@@ -41,41 +41,41 @@ jobs:
           echo "values.yaml exists: $(test -f values.yaml && echo 'Yes' || echo 'No')"
           echo "templates/ directory exists: $(test -d templates && echo 'Yes' || echo 'No')"
           echo ""
-      
+
       - name: 1. Run Helm Lint
         run: |
           echo "Step 1: Running Helm lint..."
           helm lint .
           echo ""
           echo "Helm lint passed!"
-      
+
       - name: 2. Render Templates
         run: |
           echo "Step 2: Rendering Helm templates..."
           helm template boundary-worker . > rendered.yaml
           echo "Templates rendered successfully!"
           echo "Rendered file size: $(wc -l < rendered.yaml) lines"
-      
+
       - name: 3. Install Kubeconform
         run: |
           echo "Step 3: Installing Kubeconform..."
           curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
           sudo mv kubeconform /usr/local/bin/
           kubeconform -v
-      
+
       - name: 3. Kubernetes Validation
         run: |
           echo "Step 3: Running Kubernetes validation with Kubeconform..."
           kubeconform -strict rendered.yaml
           echo "Kubernetes validation passed!"
-      
+
       - name: 4. Install yamllint
         run: |
           echo "Step 4: Installing yamllint..."
           sudo apt-get update
           sudo apt-get install -y yamllint
           yamllint --version
-      
+
       - name: 4. YAML Lint
         id: yamllint
         continue-on-error: true
@@ -83,7 +83,7 @@ jobs:
           echo "Step 4: Running YAML lint..."
           yamllint . 2>&1 | tee yamllint-output.txt
           exit ${PIPESTATUS[0]}
-      
+
       - name: 4. Check YAML Lint Results
         run: |
           if [ -f yamllint-output.txt ]; then
@@ -104,7 +104,7 @@ jobs:
               echo "YAMLLINT_STATUS=PASSED" >> $GITHUB_ENV
             fi
           fi
-      
+
       - name: 5. Install Trivy
         run: |
           echo "Step 5: Installing Trivy..."
@@ -114,7 +114,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
           trivy --version
-      
+
       - name: 5. Security Scan
         id: trivy
         continue-on-error: true
@@ -124,7 +124,7 @@ jobs:
           TRIVY_EXIT_CODE=${PIPESTATUS[0]}
           echo "TRIVY_EXIT_CODE=$TRIVY_EXIT_CODE" >> $GITHUB_ENV
           exit $TRIVY_EXIT_CODE
-      
+
       - name: 5. Check Trivy Results
         run: |
           if [ -f trivy-output.txt ]; then
@@ -150,7 +150,7 @@ jobs:
               echo "TRIVY_STATUS=PASSED" >> $GITHUB_ENV
             fi
           fi
-      
+
       - name: Lint Summary
         if: always()
         run: |
@@ -160,7 +160,7 @@ jobs:
           echo "1. Helm lint - ✅ PASSED"
           echo "2. Template rendering - ✅ PASSED"
           echo "3. Kubernetes validation - ✅ PASSED"
-          
+
           YAMLLINT_STATUS="${YAMLLINT_STATUS:-UNKNOWN}"
           if [ "$YAMLLINT_STATUS" = "PASSED" ]; then
             echo "4. YAML lint - ✅ PASSED"
@@ -171,7 +171,7 @@ jobs:
           else
             echo "4. YAML lint - ❓ UNKNOWN"
           fi
-          
+
           TRIVY_STATUS="${TRIVY_STATUS:-UNKNOWN}"
           if [ "$TRIVY_STATUS" = "PASSED" ]; then
             echo "5. Security scan - ✅ PASSED"
@@ -182,9 +182,9 @@ jobs:
           else
             echo "5. Security scan - ❓ UNKNOWN"
           fi
-          
+
           echo "================================"
-          
+
           # Determine overall status
           if [ "$YAMLLINT_STATUS" = "FAILED" ] || [ "$TRIVY_STATUS" = "FAILED" ]; then
             echo "Overall Status: ❌ FAILED"
@@ -198,5 +198,3 @@ jobs:
             echo "Lint job completed successfully!"
           fi
           echo "================================"
-
-
