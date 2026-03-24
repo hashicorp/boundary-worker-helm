@@ -6,7 +6,7 @@ on:
 
 jobs:
   lint:
-    name: Lint Helm Chart
+    name: Lint
     runs-on: ubuntu-latest
     
     steps:
@@ -57,7 +57,7 @@ jobs:
           echo "================================"
 
   test:
-    name: Test Helm Chart
+    name: Test
     runs-on: ubuntu-latest
     needs: lint
     
@@ -102,7 +102,7 @@ jobs:
           echo "================================"
 
   Package:
-    name: Package Helm Chart
+    name: Package
     runs-on: ubuntu-latest
     needs: test
     
