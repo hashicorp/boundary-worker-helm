@@ -5,22 +5,22 @@ on:
     branches: [ yash/actions ]
 
 jobs:
-  test:
+  lint:
+    name: Lint Helm Chart
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Print test message
+      - name: Print lint job info
         run: |
           echo "================================"
-          echo "Running test job for boundary-worker-helm"
+          echo "Running Lint Job"
           echo "================================"
           echo "Repository: ${{ github.repository }}"
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit SHA: ${{ github.sha }}"
-          echo "Triggered by: ${{ github.event_name }}"
           echo "================================"
       
       - name: Set up Helm
@@ -43,26 +43,111 @@ jobs:
           echo "templates/ directory exists: $(test -d templates && echo 'Yes' || echo 'No')"
           echo ""
       
-      - name: Helm Lint
+      - name: Run Helm Lint
         run: |
           echo "Running Helm lint..."
           helm lint .
-          echo " Helm lint passed!"
+          echo ""
+          echo "Helm lint passed!"
+      
+      - name: Lint Summary
+        run: |
+          echo "================================"
+          echo "Lint job completed successfully!"
+          echo "================================"
+
+  test:
+    name: Test Helm Chart
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Print test job info
+        run: |
+          echo "================================"
+          echo "Running Test Job"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "================================"
+      
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       
       - name: Helm Template (Dry Run)
         run: |
           echo "Running Helm template to validate chart rendering..."
           helm template boundary-worker . --debug
           echo ""
-          echo " Helm template validation passed!"
+          echo "Helm template validation passed!"
+      
+      - name: Test with different values
+        run: |
+          echo "Testing chart with custom values..."
+          helm template boundary-worker . \
+            --set image.tag=0.22-ent \
+            --set worker.resources.limits.cpu=500m \
+            --set worker.resources.limits.memory=2Gi
+          echo ""
+          echo "Custom values test passed!"
       
       - name: Test Summary
         run: |
           echo "================================"
-          echo " All tests completed successfully!"
+          echo "Test job completed successfully!"
           echo "================================"
-          echo "Tests performed:"
-          echo "  ✓ Chart structure verification"
-          echo "  ✓ Helm lint validation"
-          echo "  ✓ Helm template rendering"
+
+  Package:
+    name: Package Helm Chart
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Print package job info
+        run: |
+          echo "================================"
+          echo "Running package Job"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "================================"
+      
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      
+      - name: Package Helm Chart
+        run: |
+          echo "Packaging Helm chart..."
+          helm package .
+          echo ""
+          echo "Chart packaged successfully!"
+          ls -lh *.tgz
+      
+      - name: Package Summary
+        run: |
+          echo "================================"
+          echo "package job completed successfully!"
+          echo "================================"
+          echo "Chart package created and ready for distribution"
+          echo "================================"
+      
+      - name: Final Summary
+        run: |
+          echo ""
+          echo "ALL JOBS COMPLETED SUCCESSFULLY!"
+          echo ""
+          echo "Pipeline Summary:"
+          echo "  - Lint - Chart validation passed"
+          echo "  - Test - Template rendering verified"
+          echo "  - Package - Chart packaged successfully"
+          echo ""
           echo "================================"
