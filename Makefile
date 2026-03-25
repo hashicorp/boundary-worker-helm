@@ -88,8 +88,9 @@ setup-trivy:
 setup-kubescape:
 	@echo "Installing Kubescape..."
 	@curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash
-	@sudo mv kubescape /usr/local/bin/
-	@kubescape version
+	@export PATH=$$PATH:$$HOME/.kubescape/bin && \
+		sudo cp $$HOME/.kubescape/bin/kubescape /usr/local/bin/ && \
+		kubescape version
 	@echo "✅ Kubescape installed"
 
 # CI: Helm Lint + Template Rendering + Kubernetes Validation
