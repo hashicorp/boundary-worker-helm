@@ -13,13 +13,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Helm
-        run: make ci-setup-helm
+        run: make setup-helm
 
       - name: Setup Kubeconform
-        run: make ci-setup-kubeconform
+        run: make setup-kubeconform
 
       - name: Run Helm Lint & Kubernetes Validation
-        run: make ci-lint-helm-k8s
+        run: make lint-helm-k8s
 
       - name: Upload rendered templates
         uses: actions/upload-artifact@v4
@@ -42,10 +42,10 @@ jobs:
           name: rendered-templates
 
       - name: Setup Trivy
-        run: make ci-setup-trivy
+        run: make setup-trivy
 
       - name: Run Security Scan
-        run: make ci-lint-security
+        run: make lint-security
 
 
 
