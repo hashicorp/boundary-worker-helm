@@ -6,7 +6,7 @@ on:
 
 jobs:
   lint-helm:
-    name: Helm Lint
+    name: Helm Lint & Kubernetes Validation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,18 +24,6 @@ jobs:
           helm lint .
           echo "✅ Helm lint passed!"
 
-  lint-templates:
-    name: Render Templates
-    runs-on: ubuntu-latest
-    needs: lint-helm
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
       - name: Render Templates
         run: |
           echo "================================"
@@ -44,26 +32,6 @@ jobs:
           helm template boundary-worker . > rendered.yaml
           echo "✅ Templates rendered successfully!"
           echo "Rendered file size: $(wc -l < rendered.yaml) lines"
-
-      - name: Upload rendered templates
-        uses: actions/upload-artifact@v4
-        with:
-          name: rendered-templates
-          path: rendered.yaml
-          retention-days: 1
-
-  lint-kubernetes:
-    name: Kubernetes Validation
-    runs-on: ubuntu-latest
-    needs: lint-templates
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download rendered templates
-        uses: actions/download-artifact@v4
-        with:
-          name: rendered-templates
 
       - name: Install Kubeconform
         run: |
@@ -79,10 +47,17 @@ jobs:
           kubeconform -strict rendered.yaml
           echo "✅ Kubernetes validation passed!"
 
-  lint-security:
+      - name: Upload rendered templates
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-templates
+          path: rendered.yaml
+          retention-days: 1
+
+  security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: lint-templates
+    needs: lint-helm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -143,7 +118,7 @@ jobs:
 
   test:
     name: Test
-    needs: [lint-helm, lint-templates, lint-kubernetes, lint-security]
+    needs: [lint-helm, security-scan]
     uses: ./.github/workflows/unit-test-job.yml
 
   integration-test:
