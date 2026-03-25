@@ -182,20 +182,20 @@ ci-lint-helm-k8s:
 	@echo "================================"
 	@echo "Running Helm Lint"
 	@echo "================================"
-	@helm lint .
+	helm lint .
 	@echo "✅ Helm lint passed!"
 	@echo ""
 	@echo "================================"
 	@echo "Rendering Helm Templates"
 	@echo "================================"
-	@helm template boundary-worker . > rendered.yaml
+	helm template boundary-worker . > rendered.yaml
 	@echo "✅ Templates rendered successfully!"
 	@echo "Rendered file size: $$(wc -l < rendered.yaml) lines"
 	@echo ""
 	@echo "================================"
 	@echo "Running Kubernetes Validation"
 	@echo "================================"
-	@kubeconform -strict rendered.yaml
+	kubeconform -strict rendered.yaml
 	@echo "✅ Kubernetes validation passed!"
 
 # CI: Security Scan with Trivy
