@@ -1,5 +1,5 @@
 .PHONY: help format deps clean
-.PHONY: setup-helm setup-kubeconform setup-trivy lint-helm-k8s lint-security
+.PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape lint-helm-k8s trivy-scan kubescape-scan
 
 # Default target
 help:
@@ -15,8 +15,10 @@ help:
 	@echo "  make setup-helm         - Install Helm for CI"
 	@echo "  make setup-kubeconform  - Install Kubeconform for CI"
 	@echo "  make setup-trivy        - Install Trivy for CI"
+	@echo "  make setup-kubescape    - Install Kubescape for CI"
 	@echo "  make lint-helm-k8s      - Run Helm lint, render templates, and K8s validation"
-	@echo "  make lint-security      - Run security scan with Trivy"
+	@echo "  make trivy-scan      - Run security scan with Trivy"
+	@echo "  make kubescape-scan     - Run security scan with Kubescape"
 	@echo "================================"
 
 deps:
@@ -25,6 +27,7 @@ deps:
 	@command -v kubeconform >/dev/null 2>&1 || brew install kubeconform
 	@command -v yamllint >/dev/null 2>&1 || brew install yamllint
 	@command -v trivy >/dev/null 2>&1 || brew install trivy
+	@command -v kubescape >/dev/null 2>&1 || brew install kubescape
 	@command -v prettier >/dev/null 2>&1 || npm install -g prettier
 	@echo "✅ All tools installed"
 
@@ -48,7 +51,7 @@ format:
 # Clean generated files
 clean:
 	@echo "Cleaning generated files..."
-	@rm -f rendered.yaml yamllint-output.txt trivy-output.txt
+	@rm -f rendered.yaml yamllint-output.txt trivy-output.txt kubescape-output.json
 	@echo "✅ Clean complete"
 
 # ================================
@@ -81,6 +84,14 @@ setup-trivy:
 	@trivy --version
 	@echo "✅ Trivy installed"
 
+# Install Kubescape for CI (Linux)
+setup-kubescape:
+	@echo "Installing Kubescape..."
+	@curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash
+	@sudo mv kubescape /usr/local/bin/
+	@kubescape version
+	@echo "✅ Kubescape installed"
+
 # CI: Helm Lint + Template Rendering + Kubernetes Validation
 lint-helm-k8s:
 	@echo "================================"
@@ -103,7 +114,7 @@ lint-helm-k8s:
 	@echo "✅ Kubernetes validation passed!"
 
 # CI: Security Scan with Trivy
-lint-security:
+trivy-scan:
 	@echo "================================"
 	@echo "Running Security Scan with Trivy"
 	@echo "================================"
@@ -130,4 +141,38 @@ lint-security:
 		echo "⚠️  Security scan completed with warnings: $$MEDIUM_COUNT MEDIUM, $$LOW_COUNT LOW issues"; \
 	else \
 		echo "✅ Security scan passed!"; \
+	fi
+
+# CI: Security Scan with Kubescape
+kubescape-scan:
+	@echo "================================"
+	@echo "Running Security Scan with Kubescape"
+	@echo "================================"
+	@kubescape scan rendered.yaml \
+		--format json \
+		--output kubescape-output.json \
+		--exceptions ./kubescape-exceptions.json \
+		--verbose || true
+	@echo ""
+	@echo "================================"
+	@echo "Kubescape Scan Results"
+	@echo "================================"
+	@if [ -f kubescape-output.json ]; then \
+		RISK_SCORE=$$(cat kubescape-output.json | grep -o '"riskScore":[0-9.]*' | head -1 | cut -d':' -f2 || echo "0"); \
+		FAILED_CONTROLS=$$(cat kubescape-output.json | grep -o '"failedControls":[0-9]*' | head -1 | cut -d':' -f2 || echo "0"); \
+		PASSED_CONTROLS=$$(cat kubescape-output.json | grep -o '"passedControls":[0-9]*' | head -1 | cut -d':' -f2 || echo "0"); \
+		echo "  Risk Score: $$RISK_SCORE"; \
+		echo "  Failed Controls: $$FAILED_CONTROLS"; \
+		echo "  Passed Controls: $$PASSED_CONTROLS"; \
+		echo ""; \
+		if [ "$$(echo "$$RISK_SCORE > 7" | bc -l 2>/dev/null || echo 0)" -eq 1 ]; then \
+			echo "❌ Kubescape scan FAILED: Risk score $$RISK_SCORE is above threshold (7)"; \
+			exit 1; \
+		elif [ "$$(echo "$$RISK_SCORE > 5" | bc -l 2>/dev/null || echo 0)" -eq 1 ]; then \
+			echo "⚠️  Kubescape scan completed with warnings: Risk score $$RISK_SCORE"; \
+		else \
+			echo "✅ Kubescape scan passed! Risk score: $$RISK_SCORE"; \
+		fi; \
+	else \
+		echo "⚠️  Kubescape output file not found"; \
 	fi

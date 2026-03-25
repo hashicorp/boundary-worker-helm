@@ -28,7 +28,7 @@ jobs:
           path: rendered.yaml
           retention-days: 1
 
-  lint-security:
+  security:
     name: Security Scan
     runs-on: ubuntu-latest
     needs: lint
@@ -44,16 +44,30 @@ jobs:
       - name: Setup Trivy
         run: make setup-trivy
 
-      - name: Run Security Scan
-        run: make lint-security
+      - name: Run Trivy Security Scan
+        run: make trivy-scan
+
+      - name: Setup Kubescape
+        run: make setup-kubescape
+
+      - name: Run Kubescape Security Scan
+        run: make kubescape-scan
+
+      - name: Upload Kubescape results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubescape-results
+          path: kubescape-output.json
+          retention-days: 7
 
 
 
 
 
   unit-test:
-    name: unit-test
-    needs: [lint, lint-security]
+    name: Unit Test
+    needs: [lint, security]
     uses: ./.github/workflows/unit-test-job.yml
 
   acceptance-test:
