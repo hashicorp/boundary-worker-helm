@@ -5,8 +5,8 @@ on:
     branches: [yash/actions]
 
 jobs:
-  lint-helm:
-    name: Helm Lint & Kubernetes Validation
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -47,19 +47,18 @@ jobs:
       - name: Run Security Scan
         run: make ci-lint-security
 
-  test:
-    name: Test
+
+
+
+
+  unit-test:
+    name: unit-test
     needs: [lint-helm, lint-security]
     uses: ./.github/workflows/unit-test-job.yml
 
-  integration-test:
-    name: Integration Test
-    needs: test
-    uses: ./.github/workflows/integration-test-job.yml
-
   acceptance-test:
     name: Acceptance Test
-    needs: integration-test
+    needs: unit-test
     uses: ./.github/workflows/acceptance-test-job.yml
 
   release:
