@@ -5,13 +5,145 @@ on:
     branches: [yash/actions]
 
 jobs:
-  lint:
-    name: Lint
-    uses: ./.github/workflows/lint-job.yml
+  lint-helm:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Run Helm Lint
+        run: |
+          echo "================================"
+          echo "Running Helm Lint"
+          echo "================================"
+          helm lint .
+          echo "✅ Helm lint passed!"
+
+  lint-templates:
+    name: Render Templates
+    runs-on: ubuntu-latest
+    needs: lint-helm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Render Templates
+        run: |
+          echo "================================"
+          echo "Rendering Helm Templates"
+          echo "================================"
+          helm template boundary-worker . > rendered.yaml
+          echo "✅ Templates rendered successfully!"
+          echo "Rendered file size: $(wc -l < rendered.yaml) lines"
+
+      - name: Upload rendered templates
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-templates
+          path: rendered.yaml
+          retention-days: 1
+
+  lint-kubernetes:
+    name: Kubernetes Validation
+    runs-on: ubuntu-latest
+    needs: lint-templates
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download rendered templates
+        uses: actions/download-artifact@v4
+        with:
+          name: rendered-templates
+
+      - name: Install Kubeconform
+        run: |
+          curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+          kubeconform -v
+
+      - name: Kubernetes Validation
+        run: |
+          echo "================================"
+          echo "Running Kubernetes Validation"
+          echo "================================"
+          kubeconform -strict rendered.yaml
+          echo "✅ Kubernetes validation passed!"
+
+  lint-security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint-templates
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download rendered templates
+        uses: actions/download-artifact@v4
+        with:
+          name: rendered-templates
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          trivy --version
+
+      - name: Run Security Scan
+        id: trivy
+        continue-on-error: true
+        run: |
+          echo "================================"
+          echo "Running Security Scan with Trivy"
+          echo "================================"
+          trivy config rendered.yaml --exit-code 0 2>&1 | tee trivy-output.txt
+
+      - name: Check Trivy Results
+        run: |
+          if [ -f trivy-output.txt ]; then
+            CRITICAL_COUNT=$(grep -E 'CRITICAL: [0-9]+' trivy-output.txt | sed -E 's/.*CRITICAL: ([0-9]+).*/\1/' | head -1)
+            HIGH_COUNT=$(grep -E 'HIGH: [0-9]+' trivy-output.txt | sed -E 's/.*HIGH: ([0-9]+).*/\1/' | head -1)
+            MEDIUM_COUNT=$(grep -E 'MEDIUM: [0-9]+' trivy-output.txt | sed -E 's/.*MEDIUM: ([0-9]+).*/\1/' | head -1)
+            LOW_COUNT=$(grep -E 'LOW: [0-9]+' trivy-output.txt | sed -E 's/.*LOW: ([0-9]+).*/\1/' | head -1)
+            
+            CRITICAL_COUNT=${CRITICAL_COUNT:-0}
+            HIGH_COUNT=${HIGH_COUNT:-0}
+            MEDIUM_COUNT=${MEDIUM_COUNT:-0}
+            LOW_COUNT=${LOW_COUNT:-0}
+            
+            echo "Security Scan Results:"
+            echo "  CRITICAL: $CRITICAL_COUNT"
+            echo "  HIGH: $HIGH_COUNT"
+            echo "  MEDIUM: $MEDIUM_COUNT"
+            echo "  LOW: $LOW_COUNT"
+            
+            if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+              echo "::error::Security scan found $CRITICAL_COUNT CRITICAL and $HIGH_COUNT HIGH severity issues"
+              echo "❌ Security scan FAILED"
+              exit 1
+            elif [ "$MEDIUM_COUNT" -gt 0 ] || [ "$LOW_COUNT" -gt 0 ]; then
+              echo "::warning::Security scan found $MEDIUM_COUNT MEDIUM and $LOW_COUNT LOW severity issues"
+              echo "⚠️  Security scan completed with warnings"
+            else
+              echo "✅ Security scan passed!"
+            fi
+          fi
 
   test:
     name: Test
-    needs: lint
+    needs: [lint-helm, lint-templates, lint-kubernetes, lint-security]
     uses: ./.github/workflows/unit-test-job.yml
 
   integration-test:
