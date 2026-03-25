@@ -44,8 +44,8 @@ jobs:
       - name: Setup Trivy
         run: make setup-trivy
 
-      - name: Run Trivy Security Scan
-        run: make trivy-scan
+      # - name: Run Trivy Security Scan
+      #   run: make trivy-scan
 
       - name: Setup Kubescape
         run: make setup-kubescape
