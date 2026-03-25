@@ -52,8 +52,8 @@ jobs:
 
 
   unit-test:
-    name: lint
-    needs: [lint-helm, lint-security]
+    name: unit-test
+    needs: [lint, lint-security]
     uses: ./.github/workflows/unit-test-job.yml
 
   acceptance-test:
