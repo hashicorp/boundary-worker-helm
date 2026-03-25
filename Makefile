@@ -1,4 +1,5 @@
 .PHONY: help lint lint-helm lint-templates lint-k8s lint-yaml lint-security format deps clean
+.PHONY: ci-setup-helm ci-setup-kubeconform ci-setup-trivy ci-lint-helm-k8s ci-lint-security
 
 # Default target
 help:
@@ -15,6 +16,13 @@ help:
 	@echo "  make format            - Format all YAML files with Prettier"
 	@echo "  make deps              - Install required tools (macOS)"
 	@echo "  make clean             - Clean generated files"
+	@echo ""
+	@echo "CI/CD targets:"
+	@echo "  make ci-setup-helm         - Install Helm for CI"
+	@echo "  make ci-setup-kubeconform  - Install Kubeconform for CI"
+	@echo "  make ci-setup-trivy        - Install Trivy for CI"
+	@echo "  make ci-lint-helm-k8s      - Run Helm lint, render templates, and K8s validation"
+	@echo "  make ci-lint-security      - Run security scan with Trivy"
 	@echo "================================"
 
 # Install required tools (macOS with Homebrew)
@@ -138,3 +146,84 @@ clean:
 	@echo "Cleaning generated files..."
 	@rm -f rendered.yaml yamllint-output.txt trivy-output.txt
 	@echo "✅ Clean complete"
+
+# ================================
+# CI/CD Targets
+# ================================
+
+# Install Helm for CI (Linux)
+ci-setup-helm:
+	@echo "Installing Helm..."
+	@curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+	@helm version
+	@echo "✅ Helm installed"
+
+# Install Kubeconform for CI (Linux)
+ci-setup-kubeconform:
+	@echo "Installing Kubeconform..."
+	@curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+	@sudo mv kubeconform /usr/local/bin/
+	@kubeconform -v
+	@echo "✅ Kubeconform installed"
+
+# Install Trivy for CI (Linux/Ubuntu)
+ci-setup-trivy:
+	@echo "Installing Trivy..."
+	@sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+	@wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+	@echo "deb https://aquasecurity.github.io/trivy-repo/deb $$(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+	@sudo apt-get update
+	@sudo apt-get install -y trivy
+	@trivy --version
+	@echo "✅ Trivy installed"
+
+# CI: Helm Lint + Template Rendering + Kubernetes Validation
+ci-lint-helm-k8s:
+	@echo "================================"
+	@echo "Running Helm Lint"
+	@echo "================================"
+	@helm lint .
+	@echo "✅ Helm lint passed!"
+	@echo ""
+	@echo "================================"
+	@echo "Rendering Helm Templates"
+	@echo "================================"
+	@helm template boundary-worker . > rendered.yaml
+	@echo "✅ Templates rendered successfully!"
+	@echo "Rendered file size: $$(wc -l < rendered.yaml) lines"
+	@echo ""
+	@echo "================================"
+	@echo "Running Kubernetes Validation"
+	@echo "================================"
+	@kubeconform -strict rendered.yaml
+	@echo "✅ Kubernetes validation passed!"
+
+# CI: Security Scan with Trivy
+ci-lint-security:
+	@echo "================================"
+	@echo "Running Security Scan with Trivy"
+	@echo "================================"
+	@trivy config rendered.yaml --exit-code 0 2>&1 | tee trivy-output.txt
+	@CRITICAL_COUNT=$$(grep -E 'CRITICAL: [0-9]+' trivy-output.txt | sed -E 's/.*CRITICAL: ([0-9]+).*/\1/' | head -1); \
+	HIGH_COUNT=$$(grep -E 'HIGH: [0-9]+' trivy-output.txt | sed -E 's/.*HIGH: ([0-9]+).*/\1/' | head -1); \
+	MEDIUM_COUNT=$$(grep -E 'MEDIUM: [0-9]+' trivy-output.txt | sed -E 's/.*MEDIUM: ([0-9]+).*/\1/' | head -1); \
+	LOW_COUNT=$$(grep -E 'LOW: [0-9]+' trivy-output.txt | sed -E 's/.*LOW: ([0-9]+).*/\1/' | head -1); \
+	CRITICAL_COUNT=$${CRITICAL_COUNT:-0}; \
+	HIGH_COUNT=$${HIGH_COUNT:-0}; \
+	MEDIUM_COUNT=$${MEDIUM_COUNT:-0}; \
+	LOW_COUNT=$${LOW_COUNT:-0}; \
+	echo ""; \
+	echo "Security Scan Results:"; \
+	echo "  CRITICAL: $$CRITICAL_COUNT"; \
+	echo "  HIGH: $$HIGH_COUNT"; \
+	echo "  MEDIUM: $$MEDIUM_COUNT"; \
+	echo "  LOW: $$LOW_COUNT"; \
+	echo ""; \
+	if [ $$CRITICAL_COUNT -gt 0 ] || [ $$HIGH_COUNT -gt 0 ]; then \
+		echo "❌ Security scan FAILED: $$CRITICAL_COUNT CRITICAL, $$HIGH_COUNT HIGH issues"; \
+		exit 1; \
+	elif [ $$MEDIUM_COUNT -gt 0 ] || [ $$LOW_COUNT -gt 0 ]; then \
+		echo "⚠️  Security scan completed with warnings: $$MEDIUM_COUNT MEDIUM, $$LOW_COUNT LOW issues"; \
+	else \
+		echo "✅ Security scan passed!"; \
+	fi
