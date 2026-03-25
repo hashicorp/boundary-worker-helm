@@ -1,4 +1,4 @@
-.PHONY: help format deps clean
+.PHONY: help format deps clean lint
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape lint-helm-k8s trivy-scan kubescape-scan
 
 # Default target
@@ -9,6 +9,7 @@ help:
 	@echo "Available targets:"
 	@echo "  make format            - Format all YAML files with Prettier"
 	@echo "  make deps              - Install required tools (macOS)"
+	@echo "  make lint          - Run all lints and scans locally (deps + lint + scans)"
 	@echo "  make clean             - Clean generated files"
 	@echo ""
 	@echo "CI/CD targets:"
@@ -53,6 +54,22 @@ clean:
 	@echo "Cleaning generated files..."
 	@rm -f rendered.yaml yamllint-output.txt trivy-output.txt kubescape-output.json
 	@echo "✅ Clean complete"
+
+# Run all lints and scans locally
+lint: deps
+	@echo "================================"
+	@echo "Running All Lints and Scans"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) lint-helm-k8s
+	@echo ""
+	@$(MAKE) trivy-scan
+	@echo ""
+	@$(MAKE) kubescape-scan
+	@echo ""
+	@echo "================================"
+	@echo "✅ All lints and scans completed successfully!"
+	@echo "================================"
 
 # ================================
 # CI/CD Targets
