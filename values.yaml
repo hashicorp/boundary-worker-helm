@@ -70,10 +70,6 @@ containerSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
-# Network Policy
-networkPolicy:
-  enabled: true
-
 # Optional configurations
 imagePullSecrets: []
 podAnnotations: {}

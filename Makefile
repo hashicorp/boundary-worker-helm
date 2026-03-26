@@ -176,18 +176,38 @@ kubescape-scan:
 	@echo "Kubescape Scan Results"
 	@echo "================================"
 	@if [ -f kubescape-output.json ]; then \
-		RISK_SCORE=$$(cat kubescape-output.json | grep -o '"riskScore":[0-9.]*' | head -1 | cut -d':' -f2 || echo "0"); \
-		FAILED_CONTROLS=$$(cat kubescape-output.json | grep -o '"failedControls":[0-9]*' | head -1 | cut -d':' -f2 || echo "0"); \
-		PASSED_CONTROLS=$$(cat kubescape-output.json | grep -o '"passedControls":[0-9]*' | head -1 | cut -d':' -f2 || echo "0"); \
+		if command -v jq >/dev/null 2>&1; then \
+			RISK_SCORE=$$(jq -r '.summaryDetails.score // 0' kubescape-output.json); \
+			FAILED_RESOURCES=$$(jq -r '.summaryDetails.ResourceCounters.failedResources // 0' kubescape-output.json); \
+			PASSED_RESOURCES=$$(jq -r '.summaryDetails.ResourceCounters.passedResources // 0' kubescape-output.json); \
+			COMPLIANCE_SCORE=$$(jq -r '.summaryDetails.complianceScore // 0' kubescape-output.json); \
+		else \
+			echo "⚠️  jq not found, using grep fallback (less reliable)"; \
+			RISK_SCORE=$$(grep -o '"score":[0-9.]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
+			FAILED_RESOURCES=$$(grep -o '"failedResources":[0-9]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
+			PASSED_RESOURCES=$$(grep -o '"passedResources":[0-9]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
+			COMPLIANCE_SCORE="N/A"; \
+		fi; \
 		echo "  Risk Score: $$RISK_SCORE"; \
-		echo "  Failed Controls: $$FAILED_CONTROLS"; \
-		echo "  Passed Controls: $$PASSED_CONTROLS"; \
+		echo "  Compliance Score: $$COMPLIANCE_SCORE"; \
+		echo "  Failed Resources: $$FAILED_RESOURCES"; \
+		echo "  Passed Resources: $$PASSED_RESOURCES"; \
 		echo ""; \
-		if [ "$$(echo "$$RISK_SCORE > 7" | bc -l 2>/dev/null || echo 0)" -eq 1 ]; then \
-			echo "❌ Kubescape scan FAILED: Risk score $$RISK_SCORE is above threshold (7)"; \
-			exit 1; \
-		elif [ "$$(echo "$$RISK_SCORE > 5" | bc -l 2>/dev/null || echo 0)" -eq 1 ]; then \
-			echo "⚠️  Kubescape scan completed with warnings: Risk score $$RISK_SCORE"; \
+		if [ "$$FAILED_RESOURCES" -gt 0 ]; then \
+			RISK_THRESHOLD=7; \
+			if command -v awk >/dev/null 2>&1; then \
+				IS_ABOVE_THRESHOLD=$$(awk -v score="$$RISK_SCORE" -v threshold="$$RISK_THRESHOLD" 'BEGIN { print (score > threshold) ? 1 : 0 }'); \
+			else \
+				IS_ABOVE_THRESHOLD=$$(echo "$$RISK_SCORE > $$RISK_THRESHOLD" | bc -l 2>/dev/null || echo 0); \
+			fi; \
+			if [ "$$IS_ABOVE_THRESHOLD" = "1" ]; then \
+				echo "❌ Kubescape scan FAILED: Risk score $$RISK_SCORE is above threshold ($$RISK_THRESHOLD)"; \
+				echo "   Failed resources: $$FAILED_RESOURCES"; \
+				exit 1; \
+			else \
+				echo "⚠️  Kubescape scan completed with warnings: Risk score $$RISK_SCORE (threshold: $$RISK_THRESHOLD)"; \
+				echo "   Failed resources: $$FAILED_RESOURCES"; \
+			fi; \
 		else \
 			echo "✅ Kubescape scan passed! Risk score: $$RISK_SCORE"; \
 		fi; \
