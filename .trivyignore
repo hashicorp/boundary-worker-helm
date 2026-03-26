@@ -1,0 +1,17 @@
+# Trivy ignore file for Boundary Worker Helm Chart
+# These are accepted risks with documented justifications
+
+# KSV-0020: runAsUser < 10000
+# Justification: HashiCorp Boundary Worker requires UID 100 for proper operation
+# This is a non-root user that provides adequate security
+KSV-0020
+
+# KSV-0021: runAsGroup < 10000
+# Justification: HashiCorp Boundary Worker requires GID 1000 for proper operation
+# This is a non-root group that provides adequate security
+KSV-0021
+
+# KSV-0125: Untrusted registry (Docker Hub)
+# Justification: HashiCorp officially publishes Boundary Enterprise images on Docker Hub
+# This is the official and trusted source for Boundary images
+KSV-0125
