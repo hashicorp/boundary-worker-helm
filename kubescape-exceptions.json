@@ -1,0 +1,52 @@
+[
+  {
+    "name": "exclude-network-policy-customer-managed",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "alertOnly"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "kind": "Deployment",
+          "name": "boundary-worker-deployment"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0260",
+        "controlName": "Missing network policy"
+      },
+      {
+        "controlID": "C-0030",
+        "controlName": "Ingress and Egress blocked"
+      }
+    ],
+    "description": "Network policies are managed by customers at the infrastructure level"
+  },
+  {
+    "name": "exclude-label-usage",
+    "policyType": "postureExceptionPolicy",
+    "actions": [
+      "alertOnly"
+    ],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "kind": "Deployment",
+          "name": "boundary-worker-deployment"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {
+        "controlID": "C-0076",
+        "controlName": "Label usage for resources"
+      }
+    ],
+    "description": "Using Helm standard labels instead of recommended custom labels"
+  }
+]
