@@ -1,7 +1,13 @@
+# ================================
+# PHONY Declarations
+# ================================
 .PHONY: help format deps clean lint
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape lint-helm-k8s trivy-scan kubescape-scan
+.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-cleanup acceptance-full
 
-# Default target
+# ================================
+# Help Target
+# ================================
 help:
 	@echo "================================"
 	@echo "Boundary Worker Helm Chart - Lint Targets"
@@ -9,7 +15,7 @@ help:
 	@echo "Available targets:"
 	@echo "  make format            - Format all YAML files with Prettier"
 	@echo "  make deps              - Install required tools (macOS)"
-	@echo "  make lint          - Run all lints and scans locally (deps + lint + scans)"
+	@echo "  make lint              - Run all lints and scans locally (deps + lint + scans)"
 	@echo "  make clean             - Clean generated files"
 	@echo ""
 	@echo "CI/CD targets:"
@@ -18,9 +24,21 @@ help:
 	@echo "  make setup-trivy        - Install Trivy for CI"
 	@echo "  make setup-kubescape    - Install Kubescape for CI"
 	@echo "  make lint-helm-k8s      - Run Helm lint, render templates, and K8s validation"
-	@echo "  make trivy-scan      - Run security scan with Trivy"
+	@echo "  make trivy-scan         - Run security scan with Trivy"
 	@echo "  make kubescape-scan     - Run security scan with Kubescape"
+	@echo ""
+	@echo "Acceptance Testing targets:"
+	@echo "  make acceptance-setup   - Setup KIND cluster for acceptance testing"
+	@echo "  make acceptance-cluster - Create/verify acceptance cluster"
+	@echo "  make acceptance-helm    - Install Helm chart in acceptance cluster"
+	@echo "  make acceptance-test    - Run acceptance tests"
+	@echo "  make acceptance-full    - Run full acceptance workflow (cluster + helm + tests)"
+	@echo "  make acceptance-cleanup - Delete acceptance cluster"
 	@echo "================================"
+
+# ================================
+# Local Development Targets
+# ================================
 
 deps:
 	@echo "Installing required tools..."
@@ -49,13 +67,11 @@ format:
 	@echo "✅ All YAML files formatted"
 	@echo ""
 
-# Clean generated files
 clean:
 	@echo "Cleaning generated files..."
 	@rm -f rendered.yaml yamllint-output.txt trivy-output.txt kubescape-output.json
 	@echo "✅ Clean complete"
 
-# Run all lints and scans locally
 lint: deps
 	@echo "================================"
 	@echo "Running All Lints and Scans"
@@ -72,17 +88,15 @@ lint: deps
 	@echo "================================"
 
 # ================================
-# CI/CD Targets
+# CI/CD Setup Targets
 # ================================
 
-# Install Helm for CI (Linux)
 setup-helm:
 	@echo "Installing Helm..."
 	@curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 	@helm version
 	@echo "✅ Helm installed"
 
-# Install Kubeconform for CI (Linux)
 setup-kubeconform:
 	@echo "Installing Kubeconform..."
 	@curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
@@ -90,7 +104,6 @@ setup-kubeconform:
 	@kubeconform -v
 	@echo "✅ Kubeconform installed"
 
-# Install Trivy for CI (Linux/Ubuntu)
 setup-trivy:
 	@echo "Installing Trivy..."
 	@sudo apt-get install -y wget apt-transport-https gnupg lsb-release
@@ -101,7 +114,6 @@ setup-trivy:
 	@trivy --version
 	@echo "✅ Trivy installed"
 
-# Install Kubescape for CI (Linux)
 setup-kubescape:
 	@echo "Installing Kubescape..."
 	@curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash
@@ -110,7 +122,10 @@ setup-kubescape:
 		kubescape version
 	@echo "✅ Kubescape installed"
 
-# CI: Helm Lint + Template Rendering + Kubernetes Validation
+# ================================
+# CI/CD Lint & Scan Targets
+# ================================
+
 lint-helm-k8s:
 	@echo "================================"
 	@echo "Running Helm Lint"
@@ -131,7 +146,6 @@ lint-helm-k8s:
 	kubeconform -strict rendered.yaml
 	@echo "✅ Kubernetes validation passed!"
 
-# CI: Security Scan with Trivy
 trivy-scan:
 	@echo "================================"
 	@echo "Running Security Scan with Trivy"
@@ -161,7 +175,6 @@ trivy-scan:
 		echo "✅ Security scan passed!"; \
 	fi
 
-# CI: Security Scan with Kubescape
 kubescape-scan:
 	@echo "================================"
 	@echo "Running Security Scan with Kubescape"
@@ -214,3 +227,89 @@ kubescape-scan:
 	else \
 		echo "⚠️  Kubescape output file not found"; \
 	fi
+
+# ================================
+# Acceptance Testing Targets
+# ================================
+
+acceptance-cluster:
+	@echo "================================"
+	@echo "Setting up KIND Acceptance Cluster"
+	@echo "================================"
+	@if kind get clusters | grep -q "^acceptance$$"; then \
+		echo "⚠️  Acceptance cluster already exists"; \
+	else \
+		echo "Creating KIND cluster 'acceptance'..."; \
+		kind create cluster --config tests/acceptance/kind-acceptance-config.yaml; \
+		echo "✅ Acceptance cluster created"; \
+	fi
+	@echo ""
+	@echo "Verifying cluster..."
+	@kubectl cluster-info --context kind-acceptance
+	@echo "✅ Cluster is ready"
+
+acceptance-helm:
+	@echo "================================"
+	@echo "Installing Helm Chart in Acceptance Cluster"
+	@echo "================================"
+	@echo "Checking if Helm is installed..."
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found. Run 'make deps' first"; exit 1)
+	@echo "✅ Helm is available"
+	@echo ""
+	@echo "Installing boundary-worker chart with test values..."
+	@helm upgrade --install boundary-worker . \
+		--namespace boundary-worker \
+		--create-namespace \
+		--kube-context kind-acceptance \
+		--set worker.service.proxy.type=NodePort \
+		--set worker.persistence.recording.storageClass=standard \
+		--set worker.persistence.authStorage.storageClass=standard \
+		--set worker.config="listener \"tcp\" { purpose = \"proxy\" address = \"0.0.0.0:9202\" }" \
+		--wait \
+		--timeout 10m
+	@echo "✅ Helm chart installed successfully"
+	@echo ""
+	@echo "Deployed resources:"
+	@kubectl get all -n boundary-worker --context kind-acceptance
+
+acceptance-test:
+	@echo "================================"
+	@echo "Running Acceptance Tests"
+	@echo "================================"
+	@if [ ! -f tests/acceptance/acceptance-test.sh ]; then \
+		echo "❌ Test script not found: tests/acceptance/acceptance-test.sh"; \
+		exit 1; \
+	fi
+	@bash tests/acceptance/acceptance-test.sh
+
+acceptance-cleanup:
+	@echo "================================"
+	@echo "Cleaning up Acceptance Cluster"
+	@echo "================================"
+	@if kind get clusters | grep -q "^acceptance$$"; then \
+		echo "Deleting KIND cluster 'acceptance'..."; \
+		kind delete cluster --name acceptance; \
+		echo "✅ Acceptance cluster deleted"; \
+	else \
+		echo "⚠️  Acceptance cluster does not exist"; \
+	fi
+
+acceptance-setup: acceptance-cluster
+	@echo ""
+	@echo "================================"
+	@echo "✅ Acceptance Environment Ready!"
+	@echo "================================"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - Install Helm chart: make acceptance-helm"
+	@echo "  - Run tests: make acceptance-test"
+	@echo "  - Full workflow: make acceptance-full"
+	@echo "  - Cleanup: make acceptance-cleanup"
+
+acceptance-full: acceptance-cluster acceptance-helm acceptance-test
+	@echo ""
+	@echo "================================"
+	@echo "✅ Full Acceptance Test Completed!"
+	@echo "================================"
+	@echo ""
+	@echo "To cleanup, run: make acceptance-cleanup"
