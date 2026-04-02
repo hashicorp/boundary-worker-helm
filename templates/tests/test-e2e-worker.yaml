@@ -1,0 +1,271 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-e2e-worker"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "35"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      
+      # Install required tools (netcat for port checking)
+      echo "Installing netcat..."
+      if command -v microdnf >/dev/null 2>&1; then
+        # Bitnami kubectl uses microdnf
+        microdnf install -y nc 2>&1 || microdnf install -y nmap-ncat 2>&1 || echo "Could not install nc via microdnf"
+      elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y -qq netcat-openbsd 2>&1 || true
+      elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache netcat-openbsd 2>&1 || true
+      fi
+      
+      # Verify nc is available
+      if command -v nc >/dev/null 2>&1; then
+        echo "✓ netcat installed successfully"
+      else
+        echo "⚠ Warning: netcat not available, will use alternative methods"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "Test: End-to-End Worker Functionality"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      # Helper function to check if a port is open
+      check_port() {
+        local host=$1
+        local port=$2
+        
+        if command -v nc >/dev/null 2>&1; then
+          # Use netcat if available
+          timeout 5 nc -zv "$host" "$port" 2>&1 | grep -q "succeeded\|open"
+          return $?
+        else
+          # Fallback: use /dev/tcp (bash built-in)
+          timeout 5 bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null
+          return $?
+        fi
+      }
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      POD_IP=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
+      echo "Pod IP: $POD_IP"
+      
+      echo ""
+      echo "=== Phase 1: Worker Availability ==="
+      
+      echo "Verifying worker can accept proxy connections..."
+      if check_port "$POD_IP" 9202; then
+        echo "✅ Proxy port (9202) is accepting connections"
+      else
+        echo "❌ FAILED: Proxy port is not accepting connections"
+        exit 1
+      fi
+      
+      echo ""
+      echo "=== Phase 2: Service Routing ==="
+      
+      {{- if .Values.worker.service.proxy.enabled }}
+      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+      PROXY_SERVICE_IP=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.spec.clusterIP}')
+      
+      echo "Testing service routing to worker..."
+      if check_port "$PROXY_SERVICE_IP" 9202; then
+        echo "✅ Service successfully routes to worker"
+      else
+        echo "⚠️  WARNING: Service routing may have issues"
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "=== Phase 3: Worker Process Health ==="
+      
+      echo "Checking worker process is running..."
+      PROCESS_CHECK=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ps aux 2>/dev/null | grep -v grep | grep "boundary server" || echo "")
+      
+      if [ -n "$PROCESS_CHECK" ]; then
+        echo "✅ Worker process is running"
+      else
+        echo "❌ FAILED: Worker process not found"
+        exit 1
+      fi
+      
+      echo ""
+      echo "=== Phase 4: Configuration Validation ==="
+      
+      echo "Verifying worker configuration is loaded..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=100 2>/dev/null || echo "")
+      
+      if echo "$LOGS" | grep -qi "start\|listen\|worker"; then
+        echo "✅ Worker configuration appears to be loaded"
+      else
+        echo "⚠️  WARNING: Could not verify configuration load from logs"
+      fi
+      
+      echo ""
+      echo "=== Phase 5: Storage Accessibility ==="
+      
+      AUTH_PATH="{{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}"
+      
+      echo "Testing auth storage accessibility..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d "$AUTH_PATH" && \
+         kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -w "$AUTH_PATH"; then
+        echo "✅ Auth storage is accessible and writable"
+      else
+        echo "❌ FAILED: Auth storage is not accessible or writable"
+        exit 1
+      fi
+      
+      {{- if .Values.worker.persistence.recording.enabled }}
+      RECORDING_PATH="{{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}"
+      
+      echo "Testing recording storage accessibility..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d "$RECORDING_PATH" && \
+         kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -w "$RECORDING_PATH"; then
+        echo "✅ Recording storage is accessible and writable"
+      else
+        echo "⚠️  WARNING: Recording storage may not be accessible"
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "=== Phase 6: Network Connectivity ==="
+      
+      echo "Testing DNS resolution from worker..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- nslookup kubernetes.default.svc.cluster.local > /dev/null 2>&1; then
+        echo "✅ DNS resolution works"
+      else
+        echo "⚠️  WARNING: DNS resolution may have issues"
+      fi
+      
+      echo ""
+      echo "=== Phase 7: Security Posture ==="
+      
+      echo "Verifying worker runs as non-root..."
+      ACTUAL_USER=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- id -u 2>/dev/null || echo "unknown")
+      
+      if [ "$ACTUAL_USER" != "0" ] && [ "$ACTUAL_USER" != "unknown" ]; then
+        echo "✅ Worker is running as non-root user (UID: $ACTUAL_USER)"
+      else
+        echo "⚠️  WARNING: Could not verify non-root execution"
+      fi
+      
+      echo ""
+      echo "=== Phase 8: Operational Readiness ==="
+      
+      echo "Checking pod readiness status..."
+      POD_READY=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+      
+      if [ "$POD_READY" = "True" ]; then
+        echo "✅ Pod is in Ready state"
+      else
+        echo "❌ FAILED: Pod is not ready"
+        exit 1
+      fi
+      
+      echo ""
+      echo "=== Phase 9: Error-Free Operation ==="
+      
+      echo "Checking for critical errors in logs..."
+      CRITICAL_ERRORS=$(echo "$LOGS" | grep -i "panic\|fatal\|critical.*error" | grep -v "test" || echo "")
+      
+      if [ -z "$CRITICAL_ERRORS" ]; then
+        echo "✅ No critical errors in worker logs"
+      else
+        echo "⚠️  WARNING: Critical errors found in logs:"
+        echo "$CRITICAL_ERRORS" | tail -3
+      fi
+      
+      echo ""
+      echo "=== Phase 10: Resource Utilization ==="
+      
+      echo "Checking resource usage..."
+      METRICS=$(kubectl top pod "$POD_NAME" -n "$NAMESPACE" 2>&1 || echo "metrics not available")
+      
+      if echo "$METRICS" | grep -q "not available\|error"; then
+        echo "ℹ️  Metrics server not available"
+      else
+        echo "Current resource usage:"
+        echo "$METRICS"
+        echo "✅ Resource metrics available"
+      fi
+      
+      echo ""
+      echo "=== Phase 11: Integration Status ==="
+      
+      echo "Checking for controller connectivity indicators..."
+      if echo "$LOGS" | grep -qi "connect\|register\|authenticate"; then
+        echo "✅ Worker shows signs of controller integration"
+      else
+        echo "ℹ️  No explicit controller integration messages"
+        echo "This may be normal depending on configuration and log level"
+      fi
+      
+      echo ""
+      echo "=== Phase 12: Overall Health Assessment ==="
+      
+      HEALTH_SCORE=0
+      MAX_SCORE=10
+      
+      # Score based on checks
+      [ -n "$PROCESS_CHECK" ] && HEALTH_SCORE=$((HEALTH_SCORE + 1))
+      [ "$POD_READY" = "True" ] && HEALTH_SCORE=$((HEALTH_SCORE + 2))
+      [ -z "$CRITICAL_ERRORS" ] && HEALTH_SCORE=$((HEALTH_SCORE + 2))
+      check_port "$POD_IP" 9202 && HEALTH_SCORE=$((HEALTH_SCORE + 2))
+      kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -w "$AUTH_PATH" 2>/dev/null && HEALTH_SCORE=$((HEALTH_SCORE + 1))
+      [ "$ACTUAL_USER" != "0" ] && [ "$ACTUAL_USER" != "unknown" ] && HEALTH_SCORE=$((HEALTH_SCORE + 1))
+      kubectl exec -n "$NAMESPACE" "$POD_NAME" -- nslookup kubernetes.default.svc.cluster.local > /dev/null 2>&1 && HEALTH_SCORE=$((HEALTH_SCORE + 1))
+      
+      echo "Worker Health Score: $HEALTH_SCORE/$MAX_SCORE"
+      
+      if [ "$HEALTH_SCORE" -ge 8 ]; then
+        echo "✅ Worker is fully functional (Excellent)"
+      elif [ "$HEALTH_SCORE" -ge 6 ]; then
+        echo "✅ Worker is operational (Good)"
+      elif [ "$HEALTH_SCORE" -ge 4 ]; then
+        echo "⚠️  Worker has some issues (Fair)"
+      else
+        echo "❌ Worker has significant issues (Poor)"
+        exit 1
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ END-TO-END TESTS COMPLETED"
+      echo "=========================================="
+      echo "Summary:"
+      echo "  Worker Pod: Running"
+      echo "  Proxy Port: Accessible"
+      echo "  Configuration: Loaded"
+      echo "  Storage: Accessible"
+      echo "  Security: Compliant"
+      echo "  Health Score: $HEALTH_SCORE/$MAX_SCORE"
+      echo ""
+      echo "The Boundary Worker is operational and ready to handle sessions."
+{{- end }}

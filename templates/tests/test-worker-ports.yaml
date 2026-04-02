@@ -1,0 +1,163 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-worker-ports"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Ports Listening"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      # Get pod IP
+      POD_IP=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
+      echo "Pod IP: $POD_IP"
+      
+      echo ""
+      echo "Checking if port 9202 (proxy) is listening..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null | grep -q ":9202 "; then
+        echo "✅ Port 9202 is listening"
+      else
+        # Try alternative method with ss
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null | grep -q ":9202 "; then
+          echo "✅ Port 9202 is listening"
+        else
+          echo "❌ FAILED: Port 9202 is not listening"
+          echo "Listening ports:"
+          kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null || \
+            kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null || \
+            echo "Could not list ports"
+          exit 1
+        fi
+      fi
+      
+      echo ""
+      echo "Checking if port 9203 (ops) is listening..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null | grep -q ":9203 "; then
+        echo "✅ Port 9203 is listening"
+      else
+        # Try alternative method with ss
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null | grep -q ":9203 "; then
+          echo "✅ Port 9203 is listening"
+        else
+          echo "❌ FAILED: Port 9203 is not listening"
+          echo "Listening ports:"
+          kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null || \
+            kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null || \
+            echo "Could not list ports"
+          exit 1
+        fi
+      fi
+      
+      echo ""
+      echo "Verifying ports are bound to correct interfaces..."
+      PROXY_BINDING=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null | grep ":9202 " || \
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null | grep ":9202 " || echo "")
+      
+      if [ -n "$PROXY_BINDING" ]; then
+        echo "Proxy port binding:"
+        echo "$PROXY_BINDING"
+        
+        # Check if bound to 0.0.0.0 or specific IP
+        if echo "$PROXY_BINDING" | grep -q "0.0.0.0:9202\|:::9202\|\*:9202"; then
+          echo "✅ Proxy port is bound to all interfaces"
+        else
+          echo "ℹ️  Proxy port is bound to specific interface"
+        fi
+      fi
+      
+      OPS_BINDING=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null | grep ":9203 " || \
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null | grep ":9203 " || echo "")
+      
+      if [ -n "$OPS_BINDING" ]; then
+        echo "Ops port binding:"
+        echo "$OPS_BINDING"
+        
+        if echo "$OPS_BINDING" | grep -q "0.0.0.0:9203\|:::9203\|\*:9203"; then
+          echo "✅ Ops port is bound to all interfaces"
+        else
+          echo "ℹ️  Ops port is bound to specific interface"
+        fi
+      fi
+      
+      echo ""
+      echo "Testing TCP connection to proxy port (9202)..."
+      if timeout 5 nc -zv "$POD_IP" 9202 2>&1 | grep -q "succeeded\|open"; then
+        echo "✅ TCP connection to proxy port successful"
+      else
+        echo "⚠️  WARNING: Could not establish TCP connection to proxy port"
+        echo "This may be normal if the port requires authentication"
+      fi
+      
+      echo ""
+      echo "Testing TCP connection to ops port (9203)..."
+      if timeout 5 nc -zv "$POD_IP" 9203 2>&1 | grep -q "succeeded\|open"; then
+        echo "✅ TCP connection to ops port successful"
+      else
+        echo "⚠️  WARNING: Could not establish TCP connection to ops port"
+      fi
+      
+      echo ""
+      echo "Checking container port configuration..."
+      PROXY_CONTAINER_PORT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.spec.containers[0].ports[?(@.name=="proxy")].containerPort}')
+      OPS_CONTAINER_PORT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.spec.containers[0].ports[?(@.name=="ops")].containerPort}')
+      
+      if [ "$PROXY_CONTAINER_PORT" = "9202" ]; then
+        echo "✅ Proxy container port is correctly configured: $PROXY_CONTAINER_PORT"
+      else
+        echo "⚠️  WARNING: Proxy container port is $PROXY_CONTAINER_PORT, expected 9202"
+      fi
+      
+      if [ "$OPS_CONTAINER_PORT" = "9203" ]; then
+        echo "✅ Ops container port is correctly configured: $OPS_CONTAINER_PORT"
+      else
+        echo "⚠️  WARNING: Ops container port is $OPS_CONTAINER_PORT, expected 9203"
+      fi
+      
+      echo ""
+      echo "Listing all listening ports on worker..."
+      echo "All listening TCP ports:"
+      kubectl exec -n "$NAMESPACE" "$POD_NAME" -- netstat -tuln 2>/dev/null | grep LISTEN || \
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ss -tuln 2>/dev/null | grep LISTEN || \
+        echo "Could not list listening ports"
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL PORT CHECKS PASSED"
+      echo "=========================================="
+      echo "Port Status:"
+      echo "  Proxy Port (9202): Listening"
+      echo "  Ops Port (9203):   Listening"
+      echo "  Pod IP:            $POD_IP"
+{{- end }}

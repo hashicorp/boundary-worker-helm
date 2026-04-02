@@ -1,0 +1,133 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-network-connectivity"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Network Policy Compliance"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Testing outbound connectivity from worker pod..."
+      
+      # Test DNS resolution
+      echo "Checking DNS resolution..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- nslookup kubernetes.default.svc.cluster.local > /dev/null 2>&1; then
+        echo "✅ DNS resolution works (kubernetes.default.svc.cluster.local)"
+      else
+        echo "⚠️  WARNING: DNS resolution may have issues"
+      fi
+      
+      # Test external DNS
+      echo "Testing external DNS resolution..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- nslookup google.com > /dev/null 2>&1; then
+        echo "✅ External DNS resolution works"
+      else
+        echo "⚠️  WARNING: External DNS resolution may be restricted"
+      fi
+      
+      # Test connectivity to Kubernetes API
+      echo "Testing connectivity to Kubernetes API..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- nc -zv kubernetes.default.svc.cluster.local 443 2>&1 | grep -q "succeeded\|open"; then
+        echo "✅ Can reach Kubernetes API"
+      else
+        echo "⚠️  WARNING: Cannot reach Kubernetes API (may be restricted by network policy)"
+      fi
+      
+      # Test outbound HTTPS connectivity
+      echo "Testing outbound HTTPS connectivity..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- timeout 5 nc -zv google.com 443 2>&1 | grep -q "succeeded\|open"; then
+        echo "✅ Outbound HTTPS connectivity works"
+      else
+        echo "⚠️  WARNING: Outbound HTTPS connectivity may be restricted"
+      fi
+      
+      # Check if worker can reach controller (if configured)
+      echo ""
+      echo "Checking Boundary controller connectivity configuration..."
+      CONFIG=$(kubectl get configmap "{{ include "boundary.worker.configmapName" . }}" -n "$NAMESPACE" -o jsonpath='{.data.boundary-worker\.hcl}')
+      
+      if echo "$CONFIG" | grep -q "initial_upstreams"; then
+        echo "✅ Controller upstreams are configured"
+        
+        # Extract controller addresses (basic parsing)
+        CONTROLLERS=$(echo "$CONFIG" | grep -A 5 "initial_upstreams" | grep -o '"[^"]*"' | tr -d '"' | grep -v "initial_upstreams")
+        
+        if [ -n "$CONTROLLERS" ]; then
+          echo "Configured controllers:"
+          echo "$CONTROLLERS"
+          
+          # Test connectivity to first controller
+          FIRST_CONTROLLER=$(echo "$CONTROLLERS" | head -1)
+          if [ -n "$FIRST_CONTROLLER" ]; then
+            echo ""
+            echo "Testing connectivity to controller: $FIRST_CONTROLLER"
+            
+            # Extract host and port
+            CONTROLLER_HOST=$(echo "$FIRST_CONTROLLER" | cut -d: -f1)
+            CONTROLLER_PORT=$(echo "$FIRST_CONTROLLER" | cut -d: -f2)
+            
+            if [ -z "$CONTROLLER_PORT" ]; then
+              CONTROLLER_PORT="9201"
+            fi
+            
+            if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- timeout 5 nc -zv "$CONTROLLER_HOST" "$CONTROLLER_PORT" 2>&1 | grep -q "succeeded\|open"; then
+              echo "✅ Can reach Boundary controller at $CONTROLLER_HOST:$CONTROLLER_PORT"
+            else
+              echo "⚠️  WARNING: Cannot reach Boundary controller (may not be available yet)"
+            fi
+          fi
+        fi
+      else
+        echo "ℹ️  No controller upstreams configured in worker config"
+      fi
+      
+      echo ""
+      echo "Checking for network restrictions..."
+      # Check if there are any NetworkPolicies affecting the worker
+      NETWORK_POLICIES=$(kubectl get networkpolicies -n "$NAMESPACE" -o name 2>/dev/null | wc -l)
+      if [ "$NETWORK_POLICIES" -gt 0 ]; then
+        echo "ℹ️  Found $NETWORK_POLICIES NetworkPolicy resources in namespace"
+        kubectl get networkpolicies -n "$NAMESPACE"
+      else
+        echo "ℹ️  No NetworkPolicy resources found in namespace"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ NETWORK CONNECTIVITY CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Worker Pod: $POD_NAME"
+      echo "Note: Some warnings are expected depending on network policies"
+{{- end }}

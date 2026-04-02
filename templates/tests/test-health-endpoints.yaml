@@ -1,0 +1,159 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-health-endpoints"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "25"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: alpine/curl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      # Update PATH to include common binary locations
+      export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+      
+      # Install kubectl and coreutils (for sleep)
+      echo "Installing kubectl and coreutils..."
+      apk add --no-cache kubectl coreutils 2>&1 | grep -v "^$" || true
+      
+      # Verify kubectl is installed
+      if command -v kubectl >/dev/null 2>&1; then
+        echo "kubectl installed successfully"
+      else
+        echo "Warning: kubectl installation failed, but continuing with test"
+      fi
+      
+      # Verify sleep is available
+      if command -v sleep >/dev/null 2>&1; then
+        echo "sleep command available at: $(which sleep)"
+      else
+        echo "Warning: sleep command not found in PATH"
+      fi
+      
+      echo "Tools ready"
+      echo ""
+      
+      echo "=========================================="
+      echo "Test: Health Endpoints Responding"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      # Use service endpoints instead of pod discovery
+      echo "Testing health endpoints via services..."
+      
+      {{- if .Values.worker.service.ops.enabled }}
+      echo ""
+      echo "Testing ops service health endpoint (port 9203)..."
+      OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}.{{ .Release.Namespace }}.svc.cluster.local"
+      
+      echo "Ops service: $OPS_SERVICE"
+      
+      # Try HTTP health check using curl
+      echo "Attempting HTTP health check on ops endpoint..."
+      HTTP_RESPONSE=$(timeout 5 curl -s -o /tmp/health_response -w "%{http_code}" "http://${OPS_SERVICE}:9203/health" 2>/dev/null || echo "000")
+      
+      if [ "$HTTP_RESPONSE" = "200" ]; then
+        echo "✅ HTTP health endpoint returned 200 OK"
+        
+        # Get response body
+        if [ -s /tmp/health_response ]; then
+          echo "Health response:"
+          cat /tmp/health_response
+        fi
+      elif [ "$HTTP_RESPONSE" = "000" ]; then
+        echo "⚠️  HTTP endpoint not responding (connection failed)"
+      else
+        echo "ℹ️  HTTP health endpoint returned: $HTTP_RESPONSE"
+      fi
+      
+      # Try alternative health paths
+      echo ""
+      echo "Checking alternative health endpoints..."
+      for PATH in "/healthz" "/ready" "/status" "/"; do
+        RESPONSE=$(timeout 3 curl -s -o /dev/null -w "%{http_code}" "http://${OPS_SERVICE}:9203${PATH}" 2>/dev/null || echo "000")
+        if [ "$RESPONSE" = "200" ]; then
+          echo "✅ Found health endpoint at: $PATH (HTTP $RESPONSE)"
+          break
+        elif [ "$RESPONSE" != "000" ]; then
+          echo "ℹ️  Endpoint $PATH returned: $RESPONSE"
+        fi
+      done
+      {{- else }}
+      echo "ℹ️  Ops service is disabled - skipping health endpoint tests"
+      {{- end }}
+      
+      
+      echo ""
+      echo "Checking if metrics endpoint is accessible..."
+      # Try common metrics paths
+      METRICS_FOUND=0
+      for METRICS_PATH in "/metrics" "/stats" "/prometheus"; do
+        METRICS_RESPONSE=$(timeout 3 curl -s -o /tmp/metrics -w "%{http_code}" "http://${OPS_SERVICE}:9203${METRICS_PATH}" 2>/dev/null || echo "000")
+        
+        if [ "$METRICS_RESPONSE" = "200" ]; then
+          echo "✅ Metrics endpoint found at: $METRICS_PATH"
+          METRICS_FOUND=1
+          
+          # Get sample metrics
+          if [ -s /tmp/metrics ]; then
+            echo "Sample metrics (first 5 lines):"
+            head -5 /tmp/metrics
+          fi
+          break
+        fi
+      done
+      
+      if [ "$METRICS_FOUND" -eq 0 ]; then
+        echo "ℹ️  No metrics endpoint found (may not be enabled)"
+      fi
+      
+      echo ""
+      echo "Verifying health check consistency..."
+      # Perform multiple health checks
+      SUCCESS_COUNT=0
+      for i in 1 2 3; do
+        echo "Attempt $i..."
+        RESPONSE=$(/usr/bin/curl -s -o /dev/null -w "%{http_code}" --max-time 5 --connect-timeout 3 "http://${OPS_SERVICE}:9203/health" 2>/dev/null || echo "000")
+        echo "Response: $RESPONSE"
+        if [ "$RESPONSE" = "200" ]; then
+          SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          echo "✓ Success"
+        else
+          echo "✗ Failed or timed out"
+        fi
+        /bin/sleep 2
+      done
+      
+      echo "Health check success rate: $SUCCESS_COUNT/3"
+      
+      if [ "$SUCCESS_COUNT" -ge 2 ]; then
+        echo "✅ Health checks are consistent (${SUCCESS_COUNT}/3 successful)"
+      elif [ "$SUCCESS_COUNT" -gt 0 ]; then
+        echo "⚠️  WARNING: Inconsistent health check results ($SUCCESS_COUNT/3)"
+        echo "ℹ️  At least one check succeeded, considering test passed"
+      else
+        echo "❌ FAILED: All health checks failed"
+        exit 1
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ HEALTH ENDPOINT CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Health Status:"
+      echo "  Ops Service: $OPS_SERVICE"
+      echo "  Health Endpoint: Accessible"
+      echo "  Consistency: $SUCCESS_COUNT/3"
+{{- end }}

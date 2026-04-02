@@ -1,0 +1,194 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-labels"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "30"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Kubernetes Labels"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      RELEASE_NAME="{{ .Release.Name }}"
+      
+      echo "Checking Deployment labels..."
+      DEPLOYMENT_NAME="{{ include "boundary.worker.deploymentName" . }}"
+      
+      # Check standard labels on deployment
+      APP_NAME=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/name}')
+      APP_INSTANCE=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/instance}')
+      APP_COMPONENT=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}')
+      APP_MANAGED_BY=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')
+      
+      echo "Deployment labels:"
+      echo "  app.kubernetes.io/name: $APP_NAME"
+      echo "  app.kubernetes.io/instance: $APP_INSTANCE"
+      echo "  app.kubernetes.io/component: $APP_COMPONENT"
+      echo "  app.kubernetes.io/managed-by: $APP_MANAGED_BY"
+      
+      if [ -z "$APP_NAME" ]; then
+        echo "❌ FAILED: app.kubernetes.io/name label missing"
+        exit 1
+      fi
+      echo "✅ app.kubernetes.io/name label is set"
+      
+      if [ "$APP_INSTANCE" != "$RELEASE_NAME" ]; then
+        echo "❌ FAILED: app.kubernetes.io/instance should be $RELEASE_NAME, got $APP_INSTANCE"
+        exit 1
+      fi
+      echo "✅ app.kubernetes.io/instance matches release name"
+      
+      if [ "$APP_COMPONENT" != "worker" ]; then
+        echo "❌ FAILED: app.kubernetes.io/component should be worker, got $APP_COMPONENT"
+        exit 1
+      fi
+      echo "✅ app.kubernetes.io/component is worker"
+      
+      if [ "$APP_MANAGED_BY" != "Helm" ]; then
+        echo "⚠️  WARNING: app.kubernetes.io/managed-by should be Helm, got $APP_MANAGED_BY"
+      else
+        echo "✅ app.kubernetes.io/managed-by is Helm"
+      fi
+      
+      echo ""
+      echo "Checking Service labels..."
+      {{- if .Values.worker.service.proxy.enabled }}
+      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+      
+      PROXY_LABELS=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
+      echo "Proxy service labels: $PROXY_LABELS"
+      
+      if echo "$PROXY_LABELS" | grep -q "app.kubernetes.io/name"; then
+        echo "✅ Proxy service has standard labels"
+      else
+        echo "❌ FAILED: Proxy service missing standard labels"
+        exit 1
+      fi
+      {{- end }}
+      
+      {{- if .Values.worker.service.ops.enabled }}
+      OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
+      
+      OPS_LABELS=$(kubectl get service "$OPS_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
+      
+      if echo "$OPS_LABELS" | grep -q "app.kubernetes.io/name"; then
+        echo "✅ Ops service has standard labels"
+      else
+        echo "❌ FAILED: Ops service missing standard labels"
+        exit 1
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "Checking ConfigMap labels..."
+      CONFIGMAP_NAME="{{ include "boundary.worker.configmapName" . }}"
+      
+      CM_LABELS=$(kubectl get configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
+      
+      if echo "$CM_LABELS" | grep -q "app.kubernetes.io/name"; then
+        echo "✅ ConfigMap has standard labels"
+      else
+        echo "❌ FAILED: ConfigMap missing standard labels"
+        exit 1
+      fi
+      
+      echo ""
+      echo "Checking PVC labels..."
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      AUTH_PVC="{{ include "boundary.worker.authStoragePvcName" . }}"
+      
+      AUTH_PVC_LABELS=$(kubectl get pvc "$AUTH_PVC" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
+      
+      if echo "$AUTH_PVC_LABELS" | grep -q "app.kubernetes.io/name"; then
+        echo "✅ Auth storage PVC has standard labels"
+      else
+        echo "⚠️  WARNING: Auth storage PVC missing standard labels"
+      fi
+      {{- end }}
+      
+      {{- if .Values.worker.persistence.recording.enabled }}
+      RECORDING_PVC="{{ include "boundary.worker.recordingPvcName" . }}"
+      
+      RECORDING_PVC_LABELS=$(kubectl get pvc "$RECORDING_PVC" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
+      
+      if echo "$RECORDING_PVC_LABELS" | grep -q "app.kubernetes.io/name"; then
+        echo "✅ Recording storage PVC has standard labels"
+      else
+        echo "⚠️  WARNING: Recording storage PVC missing standard labels"
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "Verifying release name and chart version labels..."
+      CHART_LABEL=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.helm\.sh/chart}')
+      
+      if [ -n "$CHART_LABEL" ]; then
+        echo "✅ Chart label is set: $CHART_LABEL"
+      else
+        echo "⚠️  WARNING: helm.sh/chart label not found"
+      fi
+      
+      echo ""
+      echo "Checking Pod labels..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance=$RELEASE_NAME \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Could not find pod with expected labels"
+        exit 1
+      fi
+      
+      POD_LABELS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
+      echo "Pod labels: $POD_LABELS"
+      
+      # Verify pod has all required labels
+      for LABEL in "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component"; do
+        if echo "$POD_LABELS" | grep -q "$LABEL"; then
+          echo "✅ Pod has $LABEL label"
+        else
+          echo "❌ FAILED: Pod missing $LABEL label"
+          exit 1
+        fi
+      done
+      
+      echo ""
+      echo "Verifying label consistency across resources..."
+      # All resources should have the same app.kubernetes.io/name
+      DEPLOYMENT_APP_NAME=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/name}')
+      POD_APP_NAME=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/name}')
+      
+      if [ "$DEPLOYMENT_APP_NAME" = "$POD_APP_NAME" ]; then
+        echo "✅ Labels are consistent across deployment and pods"
+      else
+        echo "❌ FAILED: Label mismatch between deployment and pods"
+        exit 1
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL LABEL CHECKS PASSED"
+      echo "=========================================="
+      echo "Label Summary:"
+      echo "  All resources have standard Kubernetes labels"
+      echo "  Component label: worker"
+      echo "  Instance: $RELEASE_NAME"
+      echo "  Managed by: Helm"
+{{- end }}

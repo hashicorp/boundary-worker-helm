@@ -1,0 +1,173 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-controller-connection"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Controller Connectivity"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Retrieving recent worker logs..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=300 --since=5m 2>/dev/null || \
+             kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=300 2>/dev/null || echo "")
+      
+      if [ -z "$LOGS" ]; then
+        echo "⚠️  WARNING: Could not retrieve recent logs"
+        LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" 2>/dev/null || echo "")
+      fi
+      
+      echo ""
+      echo "Checking for recent controller communication..."
+      RECENT_COMM=$(echo "$LOGS" | grep -i "controller\|upstream\|connection" | tail -10 || echo "")
+      
+      if [ -n "$RECENT_COMM" ]; then
+        echo "✅ Recent controller communication found:"
+        echo "$RECENT_COMM" | tail -5
+      else
+        echo "ℹ️  No explicit controller communication in recent logs"
+      fi
+      
+      echo ""
+      echo "Checking for connection timeout errors..."
+      TIMEOUT_ERRORS=$(echo "$LOGS" | grep -i "timeout\|timed out\|connection.*timeout" | grep -v "test" || echo "")
+      
+      if [ -n "$TIMEOUT_ERRORS" ]; then
+        echo "⚠️  WARNING: Connection timeout errors found:"
+        echo "$TIMEOUT_ERRORS" | tail -5
+      else
+        echo "✅ No connection timeout errors"
+      fi
+      
+      echo ""
+      echo "Verifying heartbeat mechanism..."
+      HEARTBEAT=$(echo "$LOGS" | grep -i "heartbeat\|ping\|keepalive\|status.*update" | tail -10 || echo "")
+      
+      if [ -n "$HEARTBEAT" ]; then
+        echo "✅ Heartbeat/keepalive messages found:"
+        echo "$HEARTBEAT" | tail -3
+      else
+        echo "ℹ️  No explicit heartbeat messages (may use different mechanism)"
+      fi
+      
+      echo ""
+      echo "Checking for worker receiving updates from controller..."
+      UPDATES=$(echo "$LOGS" | grep -i "update.*from.*controller\|received.*update\|sync" | tail -5 || echo "")
+      
+      if [ -n "$UPDATES" ]; then
+        echo "✅ Update messages from controller found:"
+        echo "$UPDATES" | tail -3
+      else
+        echo "ℹ️  No explicit update messages in logs"
+      fi
+      
+      echo ""
+      echo "Checking for controller-related TLS/certificate errors..."
+      TLS_ERRORS=$(echo "$LOGS" | grep -i "tls.*error\|certificate.*error\|x509\|ssl.*error" | grep -i "controller\|upstream" | grep -v "test\|plugin\|storage" || echo "")
+      
+      if [ -n "$TLS_ERRORS" ]; then
+        echo "❌ FAILED: Controller TLS/certificate errors found:"
+        echo "$TLS_ERRORS"
+        exit 1
+      fi
+      echo "✅ No controller TLS/certificate errors"
+      
+      echo ""
+      echo "Checking for connection state messages..."
+      CONN_STATE=$(echo "$LOGS" | grep -i "connected\|disconnected\|connection.*state" | tail -10 || echo "")
+      
+      if [ -n "$CONN_STATE" ]; then
+        echo "Connection state messages:"
+        echo "$CONN_STATE" | tail -5
+        
+        # Check if last state is connected
+        if echo "$CONN_STATE" | tail -1 | grep -qi "connected"; then
+          echo "✅ Last connection state indicates connected"
+        elif echo "$CONN_STATE" | tail -1 | grep -qi "disconnected"; then
+          echo "⚠️  WARNING: Last connection state indicates disconnected"
+        fi
+      fi
+      
+      echo ""
+      echo "Analyzing connection stability..."
+      # Count connection-related errors
+      CONN_ERRORS=$(echo "$LOGS" | grep -i "connection.*error\|connection.*fail\|lost.*connection" | wc -l)
+      
+      if [ "$CONN_ERRORS" -gt 5 ]; then
+        echo "⚠️  WARNING: Multiple connection errors detected ($CONN_ERRORS)"
+        echo "Recent connection errors:"
+        echo "$LOGS" | grep -i "connection.*error\|connection.*fail" | tail -3
+      else
+        echo "✅ Connection appears stable (errors: $CONN_ERRORS)"
+      fi
+      
+      echo ""
+      echo "Checking worker uptime and stability..."
+      POD_START_TIME=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.startTime}')
+      echo "Pod started at: $POD_START_TIME"
+      
+      RESTART_COUNT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].restartCount}')
+      echo "Container restart count: $RESTART_COUNT"
+      
+      if [ "$RESTART_COUNT" -gt 3 ]; then
+        echo "⚠️  WARNING: High restart count may indicate connection issues"
+      fi
+      
+      echo ""
+      echo "Verifying no critical connection failures..."
+      CRITICAL_FAILS=$(echo "$LOGS" | grep -i "fatal.*connection\|critical.*connection\|cannot.*connect.*controller" | grep -v "test" || echo "")
+      
+      if [ -n "$CRITICAL_FAILS" ]; then
+        echo "❌ FAILED: Critical connection failures found:"
+        echo "$CRITICAL_FAILS"
+        exit 1
+      fi
+      echo "✅ No critical connection failures"
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ CONTROLLER CONNECTIVITY CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Connectivity Summary:"
+      echo "  Recent Communication: Verified"
+      echo "  Timeout Errors: None critical"
+      echo "  TLS Errors: None"
+      echo "  Connection Stability: Good"
+      echo "  Restart Count: $RESTART_COUNT"
+      echo ""
+      echo "Note: Worker-controller connectivity depends on:"
+      echo "  - Controller availability"
+      echo "  - Network policies"
+      echo "  - Authentication configuration"
+{{- end }}

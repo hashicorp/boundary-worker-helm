@@ -1,0 +1,96 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-pod-health"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Pod Running and Healthy"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo "Checking pod status..."
+      POD_STATUS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}')
+      if [ "$POD_STATUS" != "Running" ]; then
+        echo "❌ FAILED: Pod status is $POD_STATUS, expected Running"
+        kubectl describe pod "$POD_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ Pod status is Running"
+      
+      echo "Checking container ready status..."
+      CONTAINER_READY=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.status.containerStatuses[0].ready}')
+      if [ "$CONTAINER_READY" != "true" ]; then
+        echo "❌ FAILED: Container is not ready"
+        kubectl describe pod "$POD_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ Container is ready"
+      
+      echo "Checking liveness probe status..."
+      # Check if container has been restarted due to liveness probe failure
+      RESTART_COUNT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.status.containerStatuses[0].restartCount}')
+      echo "Container restart count: $RESTART_COUNT"
+      
+      echo "Checking readiness probe status..."
+      # Readiness is already checked via container ready status
+      echo "✅ Readiness probe is passing (container is ready)"
+      
+      echo "Checking for unexpected restarts..."
+      if [ "$RESTART_COUNT" -gt 2 ]; then
+        echo "⚠️  WARNING: Pod has restarted $RESTART_COUNT times (threshold: 2)"
+        echo "Recent events:"
+        kubectl get events -n "$NAMESPACE" --field-selector involvedObject.name="$POD_NAME" --sort-by='.lastTimestamp' | tail -10
+      else
+        echo "✅ Pod restart count is acceptable: $RESTART_COUNT"
+      fi
+      
+      echo "Checking container state..."
+      CONTAINER_STATE=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.status.containerStatuses[0].state}')
+      if echo "$CONTAINER_STATE" | grep -q "waiting\|terminated"; then
+        echo "❌ FAILED: Container is in unexpected state: $CONTAINER_STATE"
+        exit 1
+      fi
+      echo "✅ Container is in running state"
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL CHECKS PASSED"
+      echo "=========================================="
+      echo "Pod: $POD_NAME"
+      echo "Status: $POD_STATUS"
+      echo "Container Ready: $CONTAINER_READY"
+      echo "Restart Count: $RESTART_COUNT"
+{{- end }}

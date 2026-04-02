@@ -1,0 +1,148 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-graceful-shutdown"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Graceful Shutdown Configuration"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking terminationGracePeriodSeconds..."
+      GRACE_PERIOD=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.terminationGracePeriodSeconds}')
+      EXPECTED_GRACE="{{ .Values.worker.terminationGracePeriodSeconds | default 7200 }}"
+      
+      if [ -z "$GRACE_PERIOD" ]; then
+        echo "❌ FAILED: terminationGracePeriodSeconds not set"
+        exit 1
+      fi
+      echo "✅ terminationGracePeriodSeconds is set: $GRACE_PERIOD seconds"
+      
+      if [ "$GRACE_PERIOD" != "$EXPECTED_GRACE" ]; then
+        echo "⚠️  WARNING: Grace period ($GRACE_PERIOD) differs from expected ($EXPECTED_GRACE)"
+      else
+        echo "✅ Grace period matches configuration"
+      fi
+      
+      # Convert to human-readable format
+      GRACE_HOURS=$((GRACE_PERIOD / 3600))
+      GRACE_MINS=$(((GRACE_PERIOD % 3600) / 60))
+      echo "Grace period: ${GRACE_HOURS}h ${GRACE_MINS}m"
+      
+      echo ""
+      echo "Checking for preStop hooks..."
+      PRESTOP_HOOK=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].lifecycle.preStop}')
+      
+      if [ -n "$PRESTOP_HOOK" ]; then
+        echo "✅ preStop hook is configured"
+        echo "Hook details: $PRESTOP_HOOK"
+      else
+        echo "ℹ️  No preStop hook configured (may rely on SIGTERM handling)"
+      fi
+      
+      echo ""
+      echo "Verifying worker handles SIGTERM gracefully..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=100 2>/dev/null || echo "")
+      
+      # Check if there are any previous shutdown messages
+      SHUTDOWN_MSGS=$(echo "$LOGS" | grep -i "shutdown\|sigterm\|terminating\|graceful" || echo "")
+      
+      if [ -n "$SHUTDOWN_MSGS" ]; then
+        echo "Previous shutdown messages found:"
+        echo "$SHUTDOWN_MSGS" | tail -5
+      else
+        echo "ℹ️  No previous shutdown messages (pod hasn't been terminated)"
+      fi
+      
+      echo ""
+      echo "Checking deployment strategy..."
+      DEPLOYMENT_NAME="{{ include "boundary.worker.deploymentName" . }}"
+      STRATEGY=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.strategy.type}')
+      
+      if [ -n "$STRATEGY" ]; then
+        echo "Deployment strategy: $STRATEGY"
+        
+        if [ "$STRATEGY" = "RollingUpdate" ]; then
+          MAX_UNAVAILABLE=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.strategy.rollingUpdate.maxUnavailable}')
+          MAX_SURGE=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.strategy.rollingUpdate.maxSurge}')
+          echo "  maxUnavailable: $MAX_UNAVAILABLE"
+          echo "  maxSurge: $MAX_SURGE"
+        fi
+      fi
+      
+      echo ""
+      echo "Validating grace period is sufficient for worker sessions..."
+      if [ "$GRACE_PERIOD" -lt 300 ]; then
+        echo "⚠️  WARNING: Grace period is less than 5 minutes"
+        echo "This may not be sufficient for active sessions to complete"
+      elif [ "$GRACE_PERIOD" -ge 3600 ]; then
+        echo "✅ Grace period is adequate for long-running sessions (>= 1 hour)"
+      else
+        echo "✅ Grace period is set to a reasonable value"
+      fi
+      
+      echo ""
+      echo "Checking pod restart policy..."
+      RESTART_POLICY=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.restartPolicy}')
+      echo "Restart policy: $RESTART_POLICY"
+      
+      if [ "$RESTART_POLICY" = "Always" ]; then
+        echo "✅ Pod will restart after termination (as expected for deployment)"
+      fi
+      
+      echo ""
+      echo "Verifying no forced terminations in recent events..."
+      FORCED_TERM=$(kubectl get events -n "$NAMESPACE" --field-selector involvedObject.name="$POD_NAME" \
+        | grep -i "kill\|force.*terminat" || echo "")
+      
+      if [ -n "$FORCED_TERM" ]; then
+        echo "⚠️  WARNING: Forced termination events found:"
+        echo "$FORCED_TERM"
+      else
+        echo "✅ No forced termination events"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ GRACEFUL SHUTDOWN CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Shutdown Configuration:"
+      echo "  Grace Period: $GRACE_PERIOD seconds (${GRACE_HOURS}h ${GRACE_MINS}m)"
+      echo "  Expected: $EXPECTED_GRACE seconds"
+      echo "  Strategy: $STRATEGY"
+      echo "  Restart Policy: $RESTART_POLICY"
+      echo ""
+      echo "Note: Graceful shutdown allows active sessions to complete"
+      echo "before the worker pod is terminated."
+{{- end }}

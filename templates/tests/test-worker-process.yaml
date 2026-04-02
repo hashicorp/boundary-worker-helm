@@ -1,0 +1,149 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-worker-process"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Process Running"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking if boundary server process is running..."
+      PROCESS_CHECK=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ps aux 2>/dev/null | grep -v grep | grep "boundary server" || echo "")
+      
+      if [ -z "$PROCESS_CHECK" ]; then
+        echo "❌ FAILED: boundary server process not found"
+        echo "Running processes:"
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ps aux 2>/dev/null || echo "Could not list processes"
+        exit 1
+      fi
+      echo "✅ boundary server process is running"
+      echo "Process details:"
+      echo "$PROCESS_CHECK"
+      
+      echo ""
+      echo "Extracting process information..."
+      PID=$(echo "$PROCESS_CHECK" | awk '{print $2}' | head -1)
+      echo "Process ID: $PID"
+      
+      echo ""
+      echo "Checking if process is using correct config file..."
+      if echo "$PROCESS_CHECK" | grep -q "/tmp/boundary-worker-processed.hcl"; then
+        echo "✅ Process is using processed config file: /tmp/boundary-worker-processed.hcl"
+      elif echo "$PROCESS_CHECK" | grep -q "config"; then
+        CONFIG_FILE=$(echo "$PROCESS_CHECK" | grep -o '\-config=[^ ]*' | cut -d= -f2)
+        echo "✅ Process is using config file: $CONFIG_FILE"
+      else
+        echo "⚠️  WARNING: Could not determine config file from process arguments"
+      fi
+      
+      echo ""
+      echo "Checking process state..."
+      # Check if process is in running state (not zombie, defunct, etc.)
+      PROCESS_STATE=$(echo "$PROCESS_CHECK" | awk '{print $8}' | head -1)
+      if [ -n "$PROCESS_STATE" ]; then
+        case "$PROCESS_STATE" in
+          S|R|D)
+            echo "✅ Process is in active state: $PROCESS_STATE"
+            ;;
+          Z)
+            echo "❌ FAILED: Process is in zombie state"
+            exit 1
+            ;;
+          T)
+            echo "❌ FAILED: Process is stopped"
+            exit 1
+            ;;
+          *)
+            echo "⚠️  WARNING: Process state is: $PROCESS_STATE"
+            ;;
+        esac
+      fi
+      
+      echo ""
+      echo "Checking process uptime..."
+      # Get process start time
+      PROCESS_START=$(echo "$PROCESS_CHECK" | awk '{print $9}' | head -1)
+      if [ -n "$PROCESS_START" ]; then
+        echo "Process started at: $PROCESS_START"
+      fi
+      
+      echo ""
+      echo "Verifying process is not in error state..."
+      # Check recent logs for critical errors
+      RECENT_LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=50 2>/dev/null || echo "")
+      
+      if echo "$RECENT_LOGS" | grep -qi "panic\|fatal error\|segmentation fault"; then
+        echo "❌ FAILED: Critical errors found in recent logs"
+        echo "Recent error logs:"
+        echo "$RECENT_LOGS" | grep -i "panic\|fatal error\|segmentation fault" | tail -5
+        exit 1
+      fi
+      echo "✅ No critical errors in recent logs"
+      
+      echo ""
+      echo "Checking if worker is actively running (not stuck)..."
+      # Check if there are recent log entries
+      LAST_LOG_TIME=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=1 --timestamps 2>/dev/null | awk '{print $1}' || echo "")
+      if [ -n "$LAST_LOG_TIME" ]; then
+        echo "Last log entry timestamp: $LAST_LOG_TIME"
+        echo "✅ Worker is actively logging"
+      else
+        echo "⚠️  WARNING: Could not determine last log timestamp"
+      fi
+      
+      echo ""
+      echo "Checking process resource usage..."
+      CPU_USAGE=$(echo "$PROCESS_CHECK" | awk '{print $3}' | head -1)
+      MEM_USAGE=$(echo "$PROCESS_CHECK" | awk '{print $4}' | head -1)
+      echo "CPU Usage: ${CPU_USAGE}%"
+      echo "Memory Usage: ${MEM_USAGE}%"
+      
+      # Check if CPU usage is suspiciously high (>90%)
+      CPU_INT=$(echo "$CPU_USAGE" | cut -d. -f1)
+      if [ "$CPU_INT" -gt 90 ]; then
+        echo "⚠️  WARNING: CPU usage is very high (${CPU_USAGE}%)"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL PROCESS CHECKS PASSED"
+      echo "=========================================="
+      echo "Worker Process Summary:"
+      echo "  PID: $PID"
+      echo "  State: $PROCESS_STATE"
+      echo "  CPU: ${CPU_USAGE}%"
+      echo "  Memory: ${MEM_USAGE}%"
+      echo "  Started: $PROCESS_START"
+{{- end }}

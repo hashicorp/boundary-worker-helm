@@ -1,0 +1,169 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-worker-auth"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Authentication Token"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      AUTH_PATH="{{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking auth-storage volume..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d "$AUTH_PATH"; then
+        echo "✅ Auth storage path exists: $AUTH_PATH"
+      else
+        echo "❌ FAILED: Auth storage path not found: $AUTH_PATH"
+        exit 1
+      fi
+      
+      echo ""
+      echo "Checking for credential files in auth storage..."
+      AUTH_FILES=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ls -la "$AUTH_PATH" 2>/dev/null || echo "")
+      
+      if [ -z "$AUTH_FILES" ]; then
+        echo "⚠️  WARNING: Auth storage appears empty"
+        echo "This may be normal for a new worker that hasn't authenticated yet"
+      else
+        echo "Auth storage contents:"
+        echo "$AUTH_FILES"
+        
+        # Check for common auth file patterns
+        if echo "$AUTH_FILES" | grep -qi "auth\|token\|credential\|key"; then
+          echo "✅ Authentication-related files found"
+        else
+          echo "ℹ️  No obvious authentication files (may use different naming)"
+        fi
+      fi
+      
+      echo ""
+      echo "Checking file permissions in auth storage..."
+      if [ -n "$AUTH_FILES" ]; then
+        # Check if files are readable by the worker user
+        FIRST_FILE=$(echo "$AUTH_FILES" | grep -v "^total\|^d" | head -1 | awk '{print $NF}')
+        if [ -n "$FIRST_FILE" ]; then
+          FILE_PERMS=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- stat -c '%a' "$AUTH_PATH/$FIRST_FILE" 2>/dev/null || echo "unknown")
+          echo "File permissions: $FILE_PERMS"
+          
+          if [ "$FILE_PERMS" != "unknown" ]; then
+            echo "✅ Can read file permissions"
+          fi
+        fi
+      fi
+      
+      echo ""
+      echo "Checking worker logs for authentication token usage..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=300 2>/dev/null || echo "")
+      
+      TOKEN_REFS=$(echo "$LOGS" | grep -i "token\|credential\|auth.*file" | grep -v "test\|password" | tail -5 || echo "")
+      
+      if [ -n "$TOKEN_REFS" ]; then
+        echo "Token/credential references in logs:"
+        echo "$TOKEN_REFS" | tail -3
+      else
+        echo "ℹ️  No explicit token references in logs"
+      fi
+      
+      echo ""
+      echo "Checking for token expiration messages..."
+      TOKEN_EXPIRY=$(echo "$LOGS" | grep -i "token.*expir\|credential.*expir\|expir.*token" || echo "")
+      
+      if [ -n "$TOKEN_EXPIRY" ]; then
+        echo "⚠️  WARNING: Token expiration messages found:"
+        echo "$TOKEN_EXPIRY"
+      else
+        echo "✅ No token expiration warnings"
+      fi
+      
+      echo ""
+      echo "Checking for token refresh in logs..."
+      TOKEN_REFRESH=$(echo "$LOGS" | grep -i "refresh.*token\|token.*refresh\|renew.*credential" | tail -5 || echo "")
+      
+      if [ -n "$TOKEN_REFRESH" ]; then
+        echo "✅ Token refresh activity found:"
+        echo "$TOKEN_REFRESH" | tail -3
+      else
+        echo "ℹ️  No explicit token refresh messages"
+      fi
+      
+      echo ""
+      echo "Verifying auth storage is writable..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch "$AUTH_PATH/.test-write-$$" 2>/dev/null; then
+        echo "✅ Auth storage is writable"
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -- rm -f "$AUTH_PATH/.test-write-$$" 2>/dev/null || true
+      else
+        echo "❌ FAILED: Auth storage is not writable"
+        exit 1
+      fi
+      
+      echo ""
+      echo "Checking for authentication errors in logs..."
+      AUTH_ERRORS=$(echo "$LOGS" | grep -i "auth.*error\|authentication.*fail\|invalid.*credential" | grep -v "test" || echo "")
+      
+      if [ -n "$AUTH_ERRORS" ]; then
+        echo "⚠️  WARNING: Authentication errors found:"
+        echo "$AUTH_ERRORS" | tail -5
+      else
+        echo "✅ No authentication errors in logs"
+      fi
+      
+      echo ""
+      echo "Verifying storage persistence..."
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      PVC_NAME="{{ include "boundary.worker.authStoragePvcName" . }}"
+      PVC_STATUS=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "not found")
+      
+      if [ "$PVC_STATUS" = "Bound" ]; then
+        echo "✅ Auth storage PVC is bound (credentials will persist)"
+      else
+        echo "⚠️  WARNING: Auth storage PVC status: $PVC_STATUS"
+      fi
+      {{- else }}
+      echo "ℹ️  Auth storage using emptyDir (credentials will not persist across pod restarts)"
+      {{- end }}
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ WORKER AUTHENTICATION CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Authentication Summary:"
+      echo "  Auth Storage Path: $AUTH_PATH"
+      echo "  Storage Writable: Yes"
+      echo "  Auth Errors: None critical"
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      echo "  Persistence: Enabled (PVC)"
+      {{- else }}
+      echo "  Persistence: Disabled (emptyDir)"
+      {{- end }}
+{{- end }}

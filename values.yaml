@@ -50,6 +50,7 @@ worker:
 
 # Pod security context
 podSecurityContext:
+  runAsNonRoot: true
   runAsUser: 100
   runAsGroup: 1000
   fsGroup: 1000

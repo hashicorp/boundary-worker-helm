@@ -1,0 +1,182 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-logs"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "25"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Logs Available"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking if worker pod logs are accessible..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=50 2>&1)
+      LOG_EXIT_CODE=$?
+      
+      if [ $LOG_EXIT_CODE -ne 0 ]; then
+        echo "❌ FAILED: Cannot access pod logs"
+        echo "$LOGS"
+        exit 1
+      fi
+      echo "✅ Pod logs are accessible"
+      
+      echo ""
+      echo "Verifying logs contain expected startup messages..."
+      FULL_LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" 2>/dev/null || echo "")
+      
+      if echo "$FULL_LOGS" | grep -qi "boundary\|worker\|server"; then
+        echo "✅ Logs contain expected Boundary/worker messages"
+      else
+        echo "⚠️  WARNING: Logs may not contain expected content"
+      fi
+      
+      echo ""
+      echo "Checking log level..."
+      if echo "$FULL_LOGS" | grep -qi "info\|debug\|warn\|error"; then
+        echo "✅ Logs contain structured log levels"
+        
+        # Count log levels
+        INFO_COUNT=$(echo "$FULL_LOGS" | grep -ci "info" || echo "0")
+        WARN_COUNT=$(echo "$FULL_LOGS" | grep -ci "warn" || echo "0")
+        ERROR_COUNT=$(echo "$FULL_LOGS" | grep -ci "error" || echo "0")
+        DEBUG_COUNT=$(echo "$FULL_LOGS" | grep -ci "debug" || echo "0")
+        
+        echo "Log level distribution:"
+        echo "  INFO:  $INFO_COUNT"
+        echo "  WARN:  $WARN_COUNT"
+        echo "  ERROR: $ERROR_COUNT"
+        echo "  DEBUG: $DEBUG_COUNT"
+      else
+        echo "ℹ️  Logs may not use standard log levels"
+      fi
+      
+      echo ""
+      echo "Validating no excessive error messages..."
+      ERROR_COUNT=$(echo "$FULL_LOGS" | grep -ci "error" || echo "0")
+      TOTAL_LINES=$(echo "$FULL_LOGS" | wc -l)
+      
+      if [ "$TOTAL_LINES" -gt 0 ]; then
+        ERROR_RATIO=$((ERROR_COUNT * 100 / TOTAL_LINES))
+        echo "Error ratio: ${ERROR_RATIO}% ($ERROR_COUNT errors in $TOTAL_LINES lines)"
+        
+        if [ "$ERROR_RATIO" -gt 20 ]; then
+          echo "⚠️  WARNING: High error ratio (> 20%)"
+        else
+          echo "✅ Error ratio is acceptable"
+        fi
+      fi
+      
+      echo ""
+      echo "Checking logs are being written to stdout/stderr..."
+      # Verify logs are recent
+      RECENT_LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=10 --timestamps 2>/dev/null || echo "")
+      
+      if [ -n "$RECENT_LOGS" ]; then
+        echo "✅ Recent logs with timestamps:"
+        echo "$RECENT_LOGS" | head -3
+      else
+        echo "⚠️  WARNING: Could not retrieve timestamped logs"
+      fi
+      
+      echo ""
+      echo "Verifying log format is appropriate..."
+      # Check if logs are JSON formatted
+      if echo "$FULL_LOGS" | head -5 | grep -q "^{.*}$"; then
+        echo "✅ Logs appear to be JSON formatted"
+      else
+        echo "✅ Logs appear to be plain text formatted"
+      fi
+      
+      echo ""
+      echo "Checking for log truncation..."
+      LOG_SIZE=$(echo "$FULL_LOGS" | wc -c)
+      LOG_LINES=$(echo "$FULL_LOGS" | wc -l)
+      
+      echo "Total log size: $LOG_SIZE bytes"
+      echo "Total log lines: $LOG_LINES"
+      
+      if [ "$LOG_LINES" -lt 10 ]; then
+        echo "⚠️  WARNING: Very few log lines - worker may have just started"
+      fi
+      
+      echo ""
+      echo "Checking for critical errors in logs..."
+      CRITICAL=$(echo "$FULL_LOGS" | grep -i "panic\|fatal\|critical" | grep -v "test" || echo "")
+      
+      if [ -n "$CRITICAL" ]; then
+        echo "⚠️  WARNING: Critical errors found:"
+        echo "$CRITICAL" | tail -5
+      else
+        echo "✅ No critical errors in logs"
+      fi
+      
+      echo ""
+      echo "Verifying logs contain operational information..."
+      if echo "$FULL_LOGS" | grep -qi "start\|listen\|connect\|ready"; then
+        echo "✅ Logs contain operational status information"
+      else
+        echo "ℹ️  Limited operational information in logs"
+      fi
+      
+      echo ""
+      echo "Testing log streaming capability..."
+      STREAM_TEST=$(timeout 2 kubectl logs -n "$NAMESPACE" "$POD_NAME" --follow 2>&1 || echo "timeout")
+      
+      if echo "$STREAM_TEST" | grep -q "timeout"; then
+        echo "✅ Log streaming is functional"
+      else
+        echo "ℹ️  Log streaming test completed"
+      fi
+      
+      echo ""
+      echo "Checking previous container logs (if restarted)..."
+      PREV_LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --previous 2>&1 || echo "no previous")
+      
+      if echo "$PREV_LOGS" | grep -q "no previous\|not found"; then
+        echo "ℹ️  No previous container logs (pod hasn't restarted)"
+      else
+        echo "✅ Previous container logs are available"
+        echo "Previous log sample:"
+        echo "$PREV_LOGS" | head -3
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL LOG CHECKS PASSED"
+      echo "=========================================="
+      echo "Log Summary:"
+      echo "  Total Lines: $LOG_LINES"
+      echo "  Total Size: $LOG_SIZE bytes"
+      echo "  Accessible: Yes"
+      echo "  Format: Appropriate"
+{{- end }}

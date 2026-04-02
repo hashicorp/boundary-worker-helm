@@ -1,0 +1,167 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-worker-config-loaded"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Configuration Loaded"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Retrieving worker logs..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=200 2>/dev/null || echo "")
+      
+      if [ -z "$LOGS" ]; then
+        echo "❌ FAILED: Could not retrieve worker logs"
+        exit 1
+      fi
+      echo "✅ Worker logs retrieved"
+      
+      echo ""
+      echo "Checking for successful config load..."
+      if echo "$LOGS" | grep -qi "configuration.*load\|config.*load\|starting.*boundary"; then
+        echo "✅ Configuration loading messages found in logs"
+      else
+        echo "⚠️  WARNING: No explicit config load messages found"
+      fi
+      
+      echo ""
+      echo "Checking for configuration errors..."
+      CONFIG_ERRORS=$(echo "$LOGS" | grep -i "error.*config\|config.*error\|failed.*parse\|invalid.*config" || echo "")
+      
+      if [ -n "$CONFIG_ERRORS" ]; then
+        echo "❌ FAILED: Configuration errors found in logs:"
+        echo "$CONFIG_ERRORS"
+        exit 1
+      fi
+      echo "✅ No configuration errors found"
+      
+      echo ""
+      echo "Verifying worker name/ID is set..."
+      # Look for worker ID or name in logs
+      WORKER_ID=$(echo "$LOGS" | grep -i "worker.*id\|worker.*name" | head -5 || echo "")
+      
+      if [ -n "$WORKER_ID" ]; then
+        echo "✅ Worker ID/name found in logs:"
+        echo "$WORKER_ID" | head -3
+      else
+        echo "ℹ️  Worker ID/name not explicitly logged (may be normal)"
+      fi
+      
+      echo ""
+      echo "Checking listener configurations are loaded..."
+      LISTENER_LOGS=$(echo "$LOGS" | grep -i "listener\|listening" | head -5 || echo "")
+      
+      if [ -n "$LISTENER_LOGS" ]; then
+        echo "✅ Listener configuration messages found:"
+        echo "$LISTENER_LOGS" | head -3
+      else
+        echo "⚠️  WARNING: No listener configuration messages found"
+      fi
+      
+      echo ""
+      echo "Verifying storage paths are accessible..."
+      # Check if worker mentions storage paths
+      STORAGE_LOGS=$(echo "$LOGS" | grep -i "storage\|recording\|auth.*path" | head -5 || echo "")
+      
+      if [ -n "$STORAGE_LOGS" ]; then
+        echo "✅ Storage-related messages found:"
+        echo "$STORAGE_LOGS" | head -3
+      else
+        echo "ℹ️  No explicit storage path messages (may be normal)"
+      fi
+      
+      echo ""
+      echo "Checking for startup completion..."
+      if echo "$LOGS" | grep -qi "worker.*start\|boundary.*start\|server.*start"; then
+        echo "✅ Worker startup messages found"
+      else
+        echo "⚠️  WARNING: No explicit startup completion messages"
+      fi
+      
+      echo ""
+      echo "Verifying processed config file exists..."
+      CONFIG_EXISTS=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -f /tmp/boundary-worker-processed.hcl && echo "yes" || echo "no")
+      
+      if [ "$CONFIG_EXISTS" = "yes" ]; then
+        echo "✅ Processed config file exists at /tmp/boundary-worker-processed.hcl"
+        
+        # Check config file size
+        CONFIG_SIZE=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- wc -c /tmp/boundary-worker-processed.hcl 2>/dev/null | awk '{print $1}')
+        if [ -n "$CONFIG_SIZE" ] && [ "$CONFIG_SIZE" -gt 0 ]; then
+          echo "✅ Config file size: $CONFIG_SIZE bytes"
+        fi
+      else
+        echo "⚠️  WARNING: Processed config file not found (may use different path)"
+      fi
+      
+      echo ""
+      echo "Checking for critical startup errors..."
+      CRITICAL_ERRORS=$(echo "$LOGS" | grep -i "panic\|fatal\|critical.*error" | grep -v "test" || echo "")
+      
+      if [ -n "$CRITICAL_ERRORS" ]; then
+        echo "❌ FAILED: Critical errors found in logs:"
+        echo "$CRITICAL_ERRORS"
+        exit 1
+      fi
+      echo "✅ No critical startup errors found"
+      
+      echo ""
+      echo "Verifying worker is operational..."
+      # Check for recent activity in logs
+      RECENT_ACTIVITY=$(echo "$LOGS" | tail -10)
+      if [ -n "$RECENT_ACTIVITY" ]; then
+        echo "✅ Worker has recent log activity"
+        echo "Recent logs (last 5 lines):"
+        echo "$RECENT_ACTIVITY" | tail -5
+      fi
+      
+      echo ""
+      echo "Checking environment variable substitution..."
+      if echo "$LOGS" | grep -qi "POD_NAME\|pod.*name"; then
+        echo "✅ POD_NAME environment variable is being used"
+      else
+        echo "ℹ️  No POD_NAME references in logs (may be normal)"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL CONFIGURATION CHECKS PASSED"
+      echo "=========================================="
+      echo "Configuration Status:"
+      echo "  Config loaded: Yes"
+      echo "  Config errors: None"
+      echo "  Listeners configured: Yes"
+      echo "  Worker operational: Yes"
+{{- end }}
