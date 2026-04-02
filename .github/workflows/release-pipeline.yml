@@ -81,6 +81,9 @@ jobs:
           kubectl cluster-info --context kind-acceptance
           kubectl get nodes --context kind-acceptance
 
+      - name: Install Helm chart and run Helm tests
+        run: make acceptance-helm
+
       - name: Run acceptance tests
         run: make acceptance-test
 

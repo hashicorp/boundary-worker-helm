@@ -30,7 +30,7 @@ help:
 	@echo "Acceptance Testing targets:"
 	@echo "  make acceptance-setup   - Setup KIND cluster for acceptance testing"
 	@echo "  make acceptance-cluster - Create/verify acceptance cluster"
-	@echo "  make acceptance-helm    - Install Helm chart in acceptance cluster"
+	@echo "  make acceptance-helm    - Install Helm chart and run Helm tests"
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (cluster + helm + tests)"
 	@echo "  make acceptance-cleanup - Delete acceptance cluster"
@@ -271,6 +271,17 @@ acceptance-helm:
 	@echo ""
 	@echo "Deployed resources:"
 	@kubectl get all -n boundary-worker --context kind-acceptance
+	@echo ""
+	@echo "================================"
+	@echo "Running Helm Tests"
+	@echo "================================"
+	@echo "Running Helm test pods in boundary-worker namespace..."
+	@helm test boundary-worker \
+		--namespace boundary-worker \
+		--kube-context kind-acceptance \
+		--timeout 10m \
+		--logs
+	@echo "✅ Helm tests completed successfully"
 
 acceptance-test:
 	@echo "================================"
