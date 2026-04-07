@@ -1,9 +1,9 @@
 # ================================
 # PHONY Declarations
 # ================================
-.PHONY: help format deps clean lint
+.PHONY: help format deps clean lint worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape lint-helm-k8s trivy-scan kubescape-scan
-.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-cleanup acceptance-full
+.PHONY: acceptance-setup acceptance-helm acceptance-test acceptance-full acceptance-cleanup
 
 # ================================
 # Help Target
@@ -13,10 +13,11 @@ help:
 	@echo "Boundary Worker Helm Chart - Lint Targets"
 	@echo "================================"
 	@echo "Available targets:"
-	@echo "  make format            - Format all YAML files with Prettier"
-	@echo "  make deps              - Install required tools (macOS)"
-	@echo "  make lint              - Run all lints and scans locally (deps + lint + scans)"
-	@echo "  make clean             - Clean generated files"
+	@echo "  make format                 - Format all YAML files with Prettier"
+	@echo "  make deps                   - Install required tools (macOS)"
+	@echo "  make lint                   - Run all lints and scans locally (deps + lint + scans)"
+	@echo "  make clean                  - Clean generated files"
+	@echo "  make worker-config          - Authenticate, create a worker, and generate worker.hcl"
 	@echo ""
 	@echo "CI/CD targets:"
 	@echo "  make setup-helm         - Install Helm for CI"
@@ -28,11 +29,10 @@ help:
 	@echo "  make kubescape-scan     - Run security scan with Kubescape"
 	@echo ""
 	@echo "Acceptance Testing targets:"
-	@echo "  make acceptance-setup   - Setup KIND cluster for acceptance testing"
-	@echo "  make acceptance-cluster - Create/verify acceptance cluster"
-	@echo "  make acceptance-helm    - Install Helm chart and run Helm tests"
+	@echo "  make acceptance-setup   - Install dependencies and setup KIND cluster"
+	@echo "  make acceptance-helm    - Install Helm chart from worker.hcl and run Helm tests"
 	@echo "  make acceptance-test    - Run acceptance tests"
-	@echo "  make acceptance-full    - Run full acceptance workflow (cluster + helm + tests)"
+	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup - Delete acceptance cluster"
 	@echo "================================"
 
@@ -213,14 +213,66 @@ kubescape-scan:
 		echo "⚠️  Kubescape output file not found"; \
 	fi
 
+
 # ================================
 # Acceptance Testing Targets
 # ================================
 
-acceptance-cluster:
+acceptance-setup:
 	@echo "================================"
-	@echo "Setting up KIND Acceptance Cluster"
+	@echo "Setting up Acceptance Environment"
 	@echo "================================"
+	@echo ""
+	@echo "Step 1: Checking dependencies..."
+	@echo "--------------------------------"
+	@# Check for kubectl
+	@if ! command -v kubectl >/dev/null 2>&1; then \
+		echo "❌ kubectl is not installed"; \
+		echo "Please install kubectl: https://kubernetes.io/docs/tasks/tools/"; \
+		exit 1; \
+	fi
+	@echo "✅ kubectl is installed ($$(kubectl version --client --short 2>/dev/null || kubectl version --client))"
+	@# Check for kind
+	@if ! command -v kind >/dev/null 2>&1; then \
+		echo "❌ kind is not installed"; \
+		echo "Installing kind..."; \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			brew install kind; \
+		else \
+			curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64; \
+			chmod +x ./kind; \
+			sudo mv ./kind /usr/local/bin/kind; \
+		fi; \
+	fi
+	@echo "✅ kind is installed ($$(kind version))"
+	@# Check for helm
+	@if ! command -v helm >/dev/null 2>&1; then \
+		echo "❌ helm is not installed"; \
+		echo "Installing helm..."; \
+		curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
+	fi
+	@echo "✅ helm is installed ($$(helm version --short 2>/dev/null || helm version))"
+	@# Check for boundary CLI
+	@if ! command -v boundary >/dev/null 2>&1; then \
+		echo "⚠️  boundary CLI is not installed"; \
+		echo "Installing boundary CLI..."; \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			brew tap hashicorp/tap && brew install hashicorp/tap/boundary; \
+		else \
+			echo "Please install boundary CLI manually from:"; \
+			echo "  https://developer.hashicorp.com/boundary/install"; \
+			echo ""; \
+			echo "For Linux:"; \
+			echo "  wget https://releases.hashicorp.com/boundary/0.15.0/boundary_0.15.0_linux_amd64.zip"; \
+			echo "  unzip boundary_0.15.0_linux_amd64.zip"; \
+			echo "  sudo mv boundary /usr/local/bin/"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✅ boundary CLI is installed ($$(boundary version 2>/dev/null | head -n1 || echo 'version unknown'))"
+	@echo ""
+	@echo "Step 2: Setting up KIND cluster..."
+	@echo "--------------------------------"
 	@if kind get clusters | grep -q "^acceptance$$"; then \
 		echo "⚠️  Acceptance cluster already exists"; \
 	else \
@@ -232,41 +284,134 @@ acceptance-cluster:
 	@echo "Verifying cluster..."
 	@kubectl cluster-info --context kind-acceptance
 	@echo "✅ Cluster is ready"
+	@echo ""
+	@echo "================================"
+	@echo "✅ Acceptance Environment Ready!"
+	@echo "================================"
+	@echo ""
+	@echo "Installed tools:"
+	@echo "  - kubectl: $$(kubectl version --client --short 2>/dev/null | head -n1 || echo 'installed')"
+	@echo "  - kind: $$(kind version)"
+	@echo "  - helm: $$(helm version --short 2>/dev/null | head -n1 || echo 'installed')"
+	@echo "  - boundary: $$(boundary version 2>/dev/null | head -n1 || echo 'installed')"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - Generate worker config: make worker-config"
+	@echo "  - Install Helm chart and run Helm tests: make acceptance-helm"
+	@echo "  - Run tests: make acceptance-test"
+	@echo "  - Full workflow: make acceptance-full"
+	@echo "  - Cleanup: make acceptance-cleanup"
+
+worker-config:
+	@echo "================================"
+	@echo "Authenticating with Boundary"
+	@echo "================================"
+	@if [ -z "$$BOUNDARY_ADDR" ]; then \
+		echo "❌ BOUNDARY_ADDR environment variable is not set"; \
+		echo ""; \
+		echo "Please set it to your Boundary controller address:"; \
+		echo "  export BOUNDARY_ADDR=https://your-cluster.boundary.hashicorp.cloud"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@if [ -z "$$BOUNDARY_LOGIN_NAME" ]; then \
+		echo "❌ BOUNDARY_LOGIN_NAME environment variable is not set"; \
+		echo ""; \
+		echo "Please set it to your Boundary login name:"; \
+		echo "  export BOUNDARY_LOGIN_NAME=admin"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@if [ -z "$$BOUNDARY_PASSWORD" ]; then \
+		echo "❌ BOUNDARY_PASSWORD environment variable is not set"; \
+		echo ""; \
+		echo "Please set it to your Boundary admin password:"; \
+		echo "  export BOUNDARY_PASSWORD=your-password"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@if [ -z "$$BOUNDARY_CLUSTER_ID" ]; then \
+		echo "❌ BOUNDARY_CLUSTER_ID environment variable is not set"; \
+		echo ""; \
+		echo "Please set it to your Boundary cluster ID:"; \
+		echo "  export BOUNDARY_CLUSTER_ID=your-cluster-id"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "Boundary Address: $$BOUNDARY_ADDR"
+	@echo "Login Name: $$BOUNDARY_LOGIN_NAME"
+	@echo ""
+	@echo "Authenticating with password..."
+	@boundary authenticate password \
+		-login-name $$BOUNDARY_LOGIN_NAME \
+		-password env://BOUNDARY_PASSWORD
+	@echo ""
+	@echo "✅ Successfully authenticated with Boundary"
+	@echo ""
+	@echo "Creating controller-led worker..."
+	@TOKEN_OUT=$$(boundary workers create controller-led 2>&1); \
+	STATUS=$$?; \
+	echo "$$TOKEN_OUT"; \
+	if [ $$STATUS -ne 0 ]; then \
+		exit $$STATUS; \
+	fi; \
+	ACTIVATION_TOKEN=$$(printf '%s\n' "$$TOKEN_OUT" | awk -F': *' '/Controller-Generated Activation Token:/ { if ($$2 != "") { print $$2; exit } if (getline > 0) { gsub(/^[[:space:]]+|[[:space:]]+$$/, "", $$0); print $$0; exit } }'); \
+	if [ -z "$$ACTIVATION_TOKEN" ]; then \
+		echo "❌ Failed to extract controller-generated activation token"; \
+		exit 1; \
+	fi; \
+	export ACTIVATION_TOKEN; \
+	echo ""; \
+	echo "Generating worker.hcl from template..."; \
+	sed -e "s|<activation-token>|$$ACTIVATION_TOKEN|g" -e "s|<cluster-id>|$$BOUNDARY_CLUSTER_ID|g" scripts/worker-template.hcl > worker.hcl; \
+	echo "✅ Created worker.hcl"
 
 acceptance-helm:
 	@echo "================================"
 	@echo "Installing Helm Chart in Acceptance Cluster"
 	@echo "================================"
 	@echo "Checking if Helm is installed..."
-	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found. Run 'make deps' first"; exit 1)
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found. Run 'make acceptance-setup' first"; exit 1)
+	@if [ ! -f worker.hcl ]; then \
+		echo "❌ worker.hcl not found. Run 'make worker-config' first"; \
+		exit 1; \
+	fi
 	@echo "✅ Helm is available"
 	@echo ""
 	@echo "Installing boundary-worker chart with test values..."
 	@helm upgrade --install boundary-worker . \
-		--namespace boundary-worker \
+		--namespace boundary \
 		--create-namespace \
 		--kube-context kind-acceptance \
 		--set worker.service.proxy.type=NodePort \
 		--set worker.persistence.recording.storageClass=standard \
 		--set worker.persistence.authStorage.storageClass=standard \
-		--set worker.config="listener \"tcp\" { purpose = \"proxy\" address = \"0.0.0.0:9202\" }" \
-		--wait \
-		--timeout 10m
+		--set-file worker.config=worker.hcl \
+		--timeout 5m
 	@echo "✅ Helm chart installed successfully"
 	@echo ""
 	@echo "Deployed resources:"
-	@kubectl get all -n boundary-worker --context kind-acceptance
+	@kubectl get all -n boundary --context kind-acceptance
+	@echo ""
+	@echo "Waiting for deployment to be ready..."
+	@kubectl wait --for=condition=available --timeout=5m \
+		deployment/boundary-worker-deployment \
+		-n boundary \
+		--context kind-acceptance
+	@echo "✅ Deployment is ready"
 	@echo ""
 	@echo "================================"
 	@echo "Running Helm Tests"
 	@echo "================================"
-	@echo "Running Helm test pods in boundary-worker namespace..."
+	@echo "Running Helm test pods in boundary namespace..."
 	@helm test boundary-worker \
-		--namespace boundary-worker \
+		--namespace boundary \
 		--kube-context kind-acceptance \
-		--timeout 10m \
-		--logs
+		--timeout 10m
 	@echo "✅ Helm tests completed successfully"
+	@echo ""
+	@echo "Note: Test pod logs are not displayed as pods are deleted after completion."
+	@echo "To view logs during test execution, run: kubectl logs -n boundary -l app.kubernetes.io/component=test --follow"
 
 acceptance-test:
 	@echo "================================"
@@ -277,6 +422,22 @@ acceptance-test:
 		exit 1; \
 	fi
 	@bash tests/acceptance/acceptance-test.sh
+
+
+acceptance-full:
+	@echo "================================"
+	@echo "Running Full Acceptance Workflow"
+	@echo "================================"
+	@$(MAKE) acceptance-setup
+	@$(MAKE) worker-config
+	@$(MAKE) acceptance-helm
+	@$(MAKE) acceptance-test
+	@echo ""
+	@echo "================================"
+	@echo "✅ Full Acceptance Test Completed!"
+	@echo "================================"
+	@echo ""
+	@echo "To cleanup, run: make acceptance-cleanup"
 
 acceptance-cleanup:
 	@echo "================================"
@@ -289,23 +450,5 @@ acceptance-cleanup:
 	else \
 		echo "⚠️  Acceptance cluster does not exist"; \
 	fi
-
-acceptance-setup: acceptance-cluster
-	@echo ""
-	@echo "================================"
-	@echo "✅ Acceptance Environment Ready!"
-	@echo "================================"
-	@echo ""
-	@echo "Next steps:"
-	@echo "  - Install Helm chart"
-	@echo "  - Run tests: make acceptance-test"
-	@echo "  - Full workflow: make acceptance-full"
-	@echo "  - Cleanup: make acceptance-cleanup"
-
-acceptance-full: acceptance-cluster acceptance-helm acceptance-test
-	@echo ""
-	@echo "================================"
-	@echo "✅ Full Acceptance Test Completed!"
-	@echo "================================"
-	@echo ""
-	@echo "To cleanup, run: make acceptance-cleanup"
+	@rm -f worker.hcl
+	@echo "✅ Removed worker.hcl"
