@@ -1,0 +1,334 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-helpers"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Helper Templates Validation"
+      echo "=========================================="
+      echo ""
+      
+      # Test counter
+      TESTS_PASSED=0
+      TESTS_FAILED=0
+      
+      # Helper function to validate test
+      validate_test() {
+        local test_name="$1"
+        local expected="$2"
+        local actual="$3"
+        
+        if [ "$expected" = "$actual" ]; then
+          echo "✅ PASS: $test_name"
+          TESTS_PASSED=$((TESTS_PASSED + 1))
+          return 0
+        else
+          echo "❌ FAIL: $test_name"
+          echo "   Expected: $expected"
+          echo "   Actual:   $actual"
+          TESTS_FAILED=$((TESTS_FAILED + 1))
+          return 1
+        fi
+      }
+      
+      # Helper function to validate non-empty
+      validate_not_empty() {
+        local test_name="$1"
+        local value="$2"
+        
+        if [ -n "$value" ]; then
+          echo "✅ PASS: $test_name (value: $value)"
+          TESTS_PASSED=$((TESTS_PASSED + 1))
+          return 0
+        else
+          echo "❌ FAIL: $test_name - value is empty"
+          TESTS_FAILED=$((TESTS_FAILED + 1))
+          return 1
+        fi
+      }
+      
+      # Helper function to validate contains
+      validate_contains() {
+        local test_name="$1"
+        local haystack="$2"
+        local needle="$3"
+        
+        if echo "$haystack" | grep -q "$needle"; then
+          echo "✅ PASS: $test_name"
+          TESTS_PASSED=$((TESTS_PASSED + 1))
+          return 0
+        else
+          echo "❌ FAIL: $test_name"
+          echo "   Expected to contain: $needle"
+          echo "   Actual value: $haystack"
+          TESTS_FAILED=$((TESTS_FAILED + 1))
+          return 1
+        fi
+      }
+      
+      # Helper function to validate length
+      validate_max_length() {
+        local test_name="$1"
+        local value="$2"
+        local max_length="$3"
+        local actual_length=${#value}
+        
+        if [ "$actual_length" -le "$max_length" ]; then
+          echo "✅ PASS: $test_name (length: $actual_length <= $max_length)"
+          TESTS_PASSED=$((TESTS_PASSED + 1))
+          return 0
+        else
+          echo "❌ FAIL: $test_name"
+          echo "   Max length: $max_length"
+          echo "   Actual length: $actual_length"
+          echo "   Value: $value"
+          TESTS_FAILED=$((TESTS_FAILED + 1))
+          return 1
+        fi
+      }
+      
+      echo "=== Testing boundary.name ==="
+      BOUNDARY_NAME="{{ include "boundary.name" . }}"
+      validate_not_empty "boundary.name returns non-empty value" "$BOUNDARY_NAME"
+      validate_max_length "boundary.name is truncated to 63 chars" "$BOUNDARY_NAME" 63
+      
+      # Verify no trailing hyphens
+      if echo "$BOUNDARY_NAME" | grep -q '\-$'; then
+        echo "❌ FAIL: boundary.name has trailing hyphen"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+      else
+        echo "✅ PASS: boundary.name has no trailing hyphen"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+      fi
+      
+      echo ""
+      echo "=== Testing boundary.fullname ==="
+      BOUNDARY_FULLNAME="{{ include "boundary.fullname" . }}"
+      validate_not_empty "boundary.fullname returns non-empty value" "$BOUNDARY_FULLNAME"
+      validate_max_length "boundary.fullname is truncated to 63 chars" "$BOUNDARY_FULLNAME" 63
+      
+      # Verify no trailing hyphens
+      if echo "$BOUNDARY_FULLNAME" | grep -q '\-$'; then
+        echo "❌ FAIL: boundary.fullname has trailing hyphen"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+      else
+        echo "✅ PASS: boundary.fullname has no trailing hyphen"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+      fi
+      
+      # Verify it uses Release.Name
+      RELEASE_NAME="{{ .Release.Name }}"
+      if [ "$BOUNDARY_FULLNAME" = "$RELEASE_NAME" ] || [ "$BOUNDARY_FULLNAME" = "{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}" ]; then
+        echo "✅ PASS: boundary.fullname uses Release.Name or fullnameOverride"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+      else
+        echo "⚠️  WARNING: boundary.fullname value unexpected: $BOUNDARY_FULLNAME"
+      fi
+      
+      echo ""
+      echo "=== Testing boundary.chart ==="
+      BOUNDARY_CHART="{{ include "boundary.chart" . }}"
+      validate_not_empty "boundary.chart returns non-empty value" "$BOUNDARY_CHART"
+      validate_max_length "boundary.chart is truncated to 63 chars" "$BOUNDARY_CHART" 63
+      
+      # Verify format: name-version with + replaced by _
+      CHART_NAME="{{ .Chart.Name }}"
+      CHART_VERSION="{{ .Chart.Version }}"
+      validate_contains "boundary.chart contains chart name" "$BOUNDARY_CHART" "$CHART_NAME"
+      
+      # Verify no + characters (should be replaced with _)
+      if echo "$BOUNDARY_CHART" | grep -q '+'; then
+        echo "❌ FAIL: boundary.chart contains + character (should be replaced with _)"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+      else
+        echo "✅ PASS: boundary.chart has no + characters"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+      fi
+      
+      # Verify no trailing hyphens
+      if echo "$BOUNDARY_CHART" | grep -q '\-$'; then
+        echo "❌ FAIL: boundary.chart has trailing hyphen"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+      else
+        echo "✅ PASS: boundary.chart has no trailing hyphen"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+      fi
+      
+      echo ""
+      echo "=== Testing boundary.labels ==="
+      # Test that labels include required fields
+      LABELS_OUTPUT='{{ include "boundary.labels" . }}'
+      
+      validate_contains "boundary.labels includes helm.sh/chart" "$LABELS_OUTPUT" "helm.sh/chart"
+      validate_contains "boundary.labels includes app.kubernetes.io/name" "$LABELS_OUTPUT" "app.kubernetes.io/name"
+      validate_contains "boundary.labels includes app.kubernetes.io/instance" "$LABELS_OUTPUT" "app.kubernetes.io/instance"
+      validate_contains "boundary.labels includes app.kubernetes.io/managed-by" "$LABELS_OUTPUT" "app.kubernetes.io/managed-by"
+      
+      {{- if .Chart.AppVersion }}
+      validate_contains "boundary.labels includes app.kubernetes.io/version" "$LABELS_OUTPUT" "app.kubernetes.io/version"
+      {{- end }}
+      
+      echo ""
+      echo "=== Testing boundary.selectorLabels ==="
+      SELECTOR_LABELS='{{ include "boundary.selectorLabels" . }}'
+      
+      validate_contains "boundary.selectorLabels includes app.kubernetes.io/name" "$SELECTOR_LABELS" "app.kubernetes.io/name"
+      validate_contains "boundary.selectorLabels includes app.kubernetes.io/instance" "$SELECTOR_LABELS" "app.kubernetes.io/instance"
+      validate_contains "boundary.selectorLabels includes release name" "$SELECTOR_LABELS" "{{ .Release.Name }}"
+      
+      echo ""
+      echo "=== Testing boundary.worker.selectorLabels ==="
+      WORKER_SELECTOR_LABELS='{{ include "boundary.worker.selectorLabels" . }}'
+      
+      validate_contains "boundary.worker.selectorLabels includes app.kubernetes.io/name" "$WORKER_SELECTOR_LABELS" "app.kubernetes.io/name"
+      validate_contains "boundary.worker.selectorLabels includes app.kubernetes.io/instance" "$WORKER_SELECTOR_LABELS" "app.kubernetes.io/instance"
+      validate_contains "boundary.worker.selectorLabels includes component: worker" "$WORKER_SELECTOR_LABELS" "app.kubernetes.io/component: worker"
+      
+      echo ""
+      echo "=== Testing boundary.worker.proxy.serviceName ==="
+      PROXY_SERVICE_NAME="{{ include "boundary.worker.proxy.serviceName" . }}"
+      validate_not_empty "boundary.worker.proxy.serviceName returns non-empty value" "$PROXY_SERVICE_NAME"
+      validate_contains "boundary.worker.proxy.serviceName ends with -proxy" "$PROXY_SERVICE_NAME" "-proxy"
+      validate_contains "boundary.worker.proxy.serviceName includes fullname" "$PROXY_SERVICE_NAME" "$BOUNDARY_FULLNAME"
+      
+      echo ""
+      echo "=== Testing boundary.worker.ops.serviceName ==="
+      OPS_SERVICE_NAME="{{ include "boundary.worker.ops.serviceName" . }}"
+      validate_not_empty "boundary.worker.ops.serviceName returns non-empty value" "$OPS_SERVICE_NAME"
+      validate_contains "boundary.worker.ops.serviceName ends with -ops" "$OPS_SERVICE_NAME" "-ops"
+      validate_contains "boundary.worker.ops.serviceName includes fullname" "$OPS_SERVICE_NAME" "$BOUNDARY_FULLNAME"
+      
+      echo ""
+      echo "=== Testing boundary.worker.configmapName ==="
+      CONFIGMAP_NAME="{{ include "boundary.worker.configmapName" . }}"
+      validate_not_empty "boundary.worker.configmapName returns non-empty value" "$CONFIGMAP_NAME"
+      validate_contains "boundary.worker.configmapName ends with -config" "$CONFIGMAP_NAME" "-config"
+      validate_contains "boundary.worker.configmapName includes fullname" "$CONFIGMAP_NAME" "$BOUNDARY_FULLNAME"
+      
+      echo ""
+      echo "=== Testing boundary.worker.deploymentName ==="
+      DEPLOYMENT_NAME="{{ include "boundary.worker.deploymentName" . }}"
+      validate_not_empty "boundary.worker.deploymentName returns non-empty value" "$DEPLOYMENT_NAME"
+      validate_contains "boundary.worker.deploymentName ends with -deployment" "$DEPLOYMENT_NAME" "-deployment"
+      validate_contains "boundary.worker.deploymentName includes fullname" "$DEPLOYMENT_NAME" "$BOUNDARY_FULLNAME"
+      
+      echo ""
+      echo "=== Testing boundary.worker.recordingPvcName ==="
+      RECORDING_PVC_NAME="{{ include "boundary.worker.recordingPvcName" . }}"
+      validate_not_empty "boundary.worker.recordingPvcName returns non-empty value" "$RECORDING_PVC_NAME"
+      validate_contains "boundary.worker.recordingPvcName ends with -recording-storage" "$RECORDING_PVC_NAME" "-recording-storage"
+      validate_contains "boundary.worker.recordingPvcName includes fullname" "$RECORDING_PVC_NAME" "$BOUNDARY_FULLNAME"
+      
+      echo ""
+      echo "=== Testing boundary.worker.authStoragePvcName ==="
+      AUTH_PVC_NAME="{{ include "boundary.worker.authStoragePvcName" . }}"
+      validate_not_empty "boundary.worker.authStoragePvcName returns non-empty value" "$AUTH_PVC_NAME"
+      validate_contains "boundary.worker.authStoragePvcName ends with -auth-storage" "$AUTH_PVC_NAME" "-auth-storage"
+      validate_contains "boundary.worker.authStoragePvcName includes fullname" "$AUTH_PVC_NAME" "$BOUNDARY_FULLNAME"
+      
+      echo ""
+      echo "=== Testing boundary.test.podSecurityContext ==="
+      POD_SECURITY_CONTEXT='{{ include "boundary.test.podSecurityContext" . }}'
+      
+      validate_contains "boundary.test.podSecurityContext includes runAsNonRoot" "$POD_SECURITY_CONTEXT" "runAsNonRoot: true"
+      validate_contains "boundary.test.podSecurityContext includes runAsUser" "$POD_SECURITY_CONTEXT" "runAsUser: 65534"
+      validate_contains "boundary.test.podSecurityContext includes runAsGroup" "$POD_SECURITY_CONTEXT" "runAsGroup: 65534"
+      validate_contains "boundary.test.podSecurityContext includes fsGroup" "$POD_SECURITY_CONTEXT" "fsGroup: 65534"
+      validate_contains "boundary.test.podSecurityContext includes seccompProfile" "$POD_SECURITY_CONTEXT" "seccompProfile"
+      validate_contains "boundary.test.podSecurityContext includes RuntimeDefault" "$POD_SECURITY_CONTEXT" "type: RuntimeDefault"
+      
+      echo ""
+      echo "=== Testing boundary.test.containerSecurityContext ==="
+      CONTAINER_SECURITY_CONTEXT='{{ include "boundary.test.containerSecurityContext" . }}'
+      
+      validate_contains "boundary.test.containerSecurityContext includes allowPrivilegeEscalation" "$CONTAINER_SECURITY_CONTEXT" "allowPrivilegeEscalation: false"
+      validate_contains "boundary.test.containerSecurityContext includes runAsNonRoot" "$CONTAINER_SECURITY_CONTEXT" "runAsNonRoot: true"
+      validate_contains "boundary.test.containerSecurityContext includes runAsUser" "$CONTAINER_SECURITY_CONTEXT" "runAsUser: 65534"
+      validate_contains "boundary.test.containerSecurityContext includes runAsGroup" "$CONTAINER_SECURITY_CONTEXT" "runAsGroup: 65534"
+      validate_contains "boundary.test.containerSecurityContext includes readOnlyRootFilesystem" "$CONTAINER_SECURITY_CONTEXT" "readOnlyRootFilesystem: true"
+      validate_contains "boundary.test.containerSecurityContext includes capabilities drop ALL" "$CONTAINER_SECURITY_CONTEXT" "drop"
+      validate_contains "boundary.test.containerSecurityContext drops ALL capabilities" "$CONTAINER_SECURITY_CONTEXT" "ALL"
+      
+      echo ""
+      echo "=== Testing boundary.test.resources ==="
+      TEST_RESOURCES='{{ include "boundary.test.resources" . }}'
+      
+      validate_contains "boundary.test.resources includes requests" "$TEST_RESOURCES" "requests:"
+      validate_contains "boundary.test.resources includes cpu request" "$TEST_RESOURCES" "cpu: 100m"
+      validate_contains "boundary.test.resources includes memory request" "$TEST_RESOURCES" "memory: 128Mi"
+      validate_contains "boundary.test.resources includes limits" "$TEST_RESOURCES" "limits:"
+      validate_contains "boundary.test.resources includes cpu limit" "$TEST_RESOURCES" "cpu: 200m"
+      validate_contains "boundary.test.resources includes memory limit" "$TEST_RESOURCES" "memory: 256Mi"
+      
+      echo ""
+      echo "=== Testing Resource Name Uniqueness ==="
+      # Verify all resource names are unique
+      NAMES="$PROXY_SERVICE_NAME $OPS_SERVICE_NAME $CONFIGMAP_NAME $DEPLOYMENT_NAME $RECORDING_PVC_NAME $AUTH_PVC_NAME"
+      UNIQUE_NAMES=$(echo "$NAMES" | tr ' ' '\n' | sort -u | wc -l)
+      TOTAL_NAMES=$(echo "$NAMES" | wc -w)
+      
+      if [ "$UNIQUE_NAMES" -eq "$TOTAL_NAMES" ]; then
+        echo "✅ PASS: All resource names are unique"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+      else
+        echo "❌ FAIL: Resource names are not unique"
+        echo "   Names: $NAMES"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+      fi
+      
+      echo ""
+      echo "=== Testing DNS Compliance ==="
+      # Verify all names are DNS-compliant (lowercase alphanumeric and hyphens only)
+      for NAME in $PROXY_SERVICE_NAME $OPS_SERVICE_NAME $CONFIGMAP_NAME $DEPLOYMENT_NAME $RECORDING_PVC_NAME $AUTH_PVC_NAME; do
+        if echo "$NAME" | grep -qE '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'; then
+          echo "✅ PASS: $NAME is DNS-compliant"
+          TESTS_PASSED=$((TESTS_PASSED + 1))
+        else
+          echo "❌ FAIL: $NAME is not DNS-compliant"
+          TESTS_FAILED=$((TESTS_FAILED + 1))
+        fi
+      done
+      
+      echo ""
+      echo "=========================================="
+      echo "Test Summary"
+      echo "=========================================="
+      echo "Tests Passed: $TESTS_PASSED"
+      echo "Tests Failed: $TESTS_FAILED"
+      echo "Total Tests:  $((TESTS_PASSED + TESTS_FAILED))"
+      echo ""
+      
+      if [ "$TESTS_FAILED" -eq 0 ]; then
+        echo "✅ ALL HELPER TEMPLATE TESTS PASSED"
+        echo "=========================================="
+        exit 0
+      else
+        echo "❌ SOME TESTS FAILED"
+        echo "=========================================="
+        exit 1
+      fi
+{{- end }}
