@@ -3,6 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "boundary.worker.deploymentName" . }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
@@ -22,6 +23,7 @@ spec:
       labels:
         {{- include "boundary.worker.selectorLabels" . | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -29,26 +31,6 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default 7200 }}  # 2 hours grace period for graceful shutdown
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      initContainers:
-        - name: volume-permissions
-          image: busybox
-          command:
-            - sh
-            - -c
-            - >-
-              mkdir -p {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }} {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }} &&
-              chown -R 100:1000 {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }} {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
-          volumeMounts:
-            {{- if .Values.worker.persistence.recording.enabled }}
-            - name: recording-storage
-              mountPath: {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}
-            {{- end }}
-            {{- if .Values.worker.persistence.authStorage.enabled }}
-            - name: auth-storage
-              mountPath: {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
-            {{- end }}
-          securityContext:
-            runAsUser: 0
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -93,6 +75,8 @@ spec:
             - name: config
               mountPath: /etc/boundary
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
             - name: auth-storage
               mountPath: {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
             {{- if .Values.worker.persistence.recording.enabled }}
@@ -103,6 +87,8 @@ spec:
         - name: config
           configMap:
             name: {{ include "boundary.worker.configmapName" . }}
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.worker.persistence.authStorage.enabled }}
         - name: auth-storage
           persistentVolumeClaim:

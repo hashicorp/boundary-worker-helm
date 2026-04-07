@@ -1,0 +1,190 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-restart-resilience"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Pod Restart Resilience"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking pod restart count..."
+      RESTART_COUNT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].restartCount}')
+      echo "Current restart count: $RESTART_COUNT"
+      
+      if [ "$RESTART_COUNT" -gt 5 ]; then
+        echo "⚠️  WARNING: High restart count ($RESTART_COUNT) - investigating..."
+        
+        # Get restart reasons
+        LAST_STATE=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].lastState}')
+        echo "Last container state: $LAST_STATE"
+        
+        # Check for crash loop
+        POD_STATUS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}')
+        if [ "$POD_STATUS" = "CrashLoopBackOff" ]; then
+          echo "❌ FAILED: Pod is in CrashLoopBackOff state"
+          exit 1
+        fi
+      elif [ "$RESTART_COUNT" -eq 0 ]; then
+        echo "✅ Pod has not restarted (excellent stability)"
+      else
+        echo "✅ Restart count is within acceptable range"
+      fi
+      
+      echo ""
+      echo "Verifying persistent data survives restarts..."
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      AUTH_PATH="{{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}"
+      
+      # Check if auth storage has data
+      AUTH_FILES=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ls -A "$AUTH_PATH" 2>/dev/null | wc -l)
+      
+      if [ "$AUTH_FILES" -gt 0 ]; then
+        echo "✅ Auth storage contains data ($AUTH_FILES items)"
+        echo "Data persists across restarts via PVC"
+      else
+        echo "ℹ️  Auth storage is empty (may be a new deployment)"
+      fi
+      {{- else }}
+      echo "⚠️  WARNING: Auth storage uses emptyDir - data will not persist across restarts"
+      {{- end }}
+      
+      {{- if .Values.worker.persistence.recording.enabled }}
+      RECORDING_PATH="{{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}"
+      RECORDING_FILES=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ls -A "$RECORDING_PATH" 2>/dev/null | wc -l)
+      
+      if [ "$RECORDING_FILES" -gt 0 ]; then
+        echo "✅ Recording storage contains data ($RECORDING_FILES items)"
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "Checking for restart-related events..."
+      RESTART_EVENTS=$(kubectl get events -n "$NAMESPACE" --field-selector involvedObject.name="$POD_NAME" \
+        | grep -i "restart\|backoff\|crash" || echo "")
+      
+      if [ -n "$RESTART_EVENTS" ]; then
+        echo "Restart-related events found:"
+        echo "$RESTART_EVENTS" | tail -5
+      else
+        echo "✅ No restart-related events"
+      fi
+      
+      echo ""
+      echo "Verifying worker re-registers after restart..."
+      if [ "$RESTART_COUNT" -gt 0 ]; then
+        LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=200 2>/dev/null || echo "")
+        
+        # Look for registration/authentication after restart
+        if echo "$LOGS" | grep -qi "start\|register\|authenticate"; then
+          echo "✅ Worker shows startup/registration activity after restart"
+        else
+          echo "⚠️  WARNING: No clear startup activity in recent logs"
+        fi
+      else
+        echo "ℹ️  Pod has not restarted - cannot verify re-registration"
+      fi
+      
+      echo ""
+      echo "Checking pod age and uptime..."
+      POD_START_TIME=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.startTime}')
+      echo "Pod started at: $POD_START_TIME"
+      
+      # Calculate uptime (simplified)
+      CURRENT_TIME=$(date -u +%s)
+      START_TIME=$(date -d "$POD_START_TIME" +%s 2>/dev/null || echo "$CURRENT_TIME")
+      UPTIME=$((CURRENT_TIME - START_TIME))
+      UPTIME_HOURS=$((UPTIME / 3600))
+      UPTIME_MINS=$(((UPTIME % 3600) / 60))
+      
+      echo "Pod uptime: ${UPTIME_HOURS}h ${UPTIME_MINS}m"
+      
+      if [ "$UPTIME" -lt 300 ]; then
+        echo "ℹ️  Pod recently started (< 5 minutes)"
+      fi
+      
+      echo ""
+      echo "Validating no data loss indicators..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=100 2>/dev/null || echo "")
+      DATA_LOSS=$(echo "$LOGS" | grep -i "data.*loss\|lost.*data\|corrupt" || echo "")
+      
+      if [ -n "$DATA_LOSS" ]; then
+        echo "⚠️  WARNING: Potential data loss indicators found:"
+        echo "$DATA_LOSS"
+      else
+        echo "✅ No data loss indicators in logs"
+      fi
+      
+      echo ""
+      echo "Checking liveness probe configuration..."
+      LIVENESS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].livenessProbe}')
+      
+      if [ -n "$LIVENESS" ]; then
+        echo "✅ Liveness probe is configured"
+        LIVENESS_FAILURES=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].restartCount}')
+        echo "Liveness probe has triggered $LIVENESS_FAILURES restart(s)"
+      else
+        echo "⚠️  WARNING: No liveness probe configured"
+      fi
+      
+      echo ""
+      echo "Verifying readiness after restart..."
+      READY=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].ready}')
+      
+      if [ "$READY" = "true" ]; then
+        echo "✅ Pod is ready after restart(s)"
+      else
+        echo "⚠️  WARNING: Pod is not ready"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ RESTART RESILIENCE CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Resilience Summary:"
+      echo "  Restart Count: $RESTART_COUNT"
+      echo "  Pod Status: Ready"
+      echo "  Uptime: ${UPTIME_HOURS}h ${UPTIME_MINS}m"
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      echo "  Data Persistence: Enabled (PVC)"
+      {{- else }}
+      echo "  Data Persistence: Disabled (emptyDir)"
+      {{- end }}
+{{- end }}

@@ -94,3 +94,41 @@ Get the worker auth storage PVC name
 {{- define "boundary.worker.authStoragePvcName" -}}
 {{- printf "%s-auth-storage" (include "boundary.fullname" .) }}
 {{- end }}
+
+{{/*
+Secure pod security context for test pods
+*/}}
+{{- define "boundary.test.podSecurityContext" -}}
+runAsNonRoot: true
+runAsUser: 65534
+runAsGroup: 65534
+fsGroup: 65534
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{/*
+Secure container security context for test pods
+*/}}
+{{- define "boundary.test.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+runAsNonRoot: true
+runAsUser: 65534
+runAsGroup: 65534
+readOnlyRootFilesystem: true
+capabilities:
+  drop:
+    - ALL
+{{- end }}
+
+{{/*
+Resource limits and requests for test pods
+*/}}
+{{- define "boundary.test.resources" -}}
+requests:
+  cpu: 100m
+  memory: 128Mi
+limits:
+  cpu: 200m
+  memory: 256Mi
+{{- end }}

@@ -1,0 +1,187 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-annotations"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "30"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Annotations"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking pod annotations include config checksums..."
+      CONFIG_CHECKSUM=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.checksum/config}')
+      
+      if [ -n "$CONFIG_CHECKSUM" ]; then
+        echo "✅ Config checksum annotation present: $CONFIG_CHECKSUM"
+      else
+        echo "⚠️  WARNING: Config checksum annotation not found"
+      fi
+      
+      VALUES_CHECKSUM=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.checksum/values}')
+      
+      if [ -n "$VALUES_CHECKSUM" ]; then
+        echo "✅ Values checksum annotation present: $VALUES_CHECKSUM"
+      else
+        echo "⚠️  WARNING: Values checksum annotation not found"
+      fi
+      
+      echo ""
+      echo "Checking service annotations..."
+      {{- if .Values.worker.service.proxy.enabled }}
+      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+      
+      echo "Proxy service annotations:"
+      PROXY_ANNOTATIONS=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}')
+      
+      if [ -n "$PROXY_ANNOTATIONS" ]; then
+        echo "$PROXY_ANNOTATIONS"
+        
+        {{- if .Values.worker.service.proxy.annotations }}
+        # Check for expected annotations from values
+        {{- range $key, $value := .Values.worker.service.proxy.annotations }}
+        ANNOTATION_VALUE=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.{{ $key | replace "." "\\." }}}')
+        if [ -n "$ANNOTATION_VALUE" ]; then
+          echo "✅ Found annotation: {{ $key }}"
+        else
+          echo "⚠️  WARNING: Expected annotation not found: {{ $key }}"
+        fi
+        {{- end }}
+        {{- end }}
+      else
+        echo "ℹ️  No annotations on proxy service"
+      fi
+      {{- end }}
+      
+      {{- if .Values.worker.service.ops.enabled }}
+      echo ""
+      OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
+      
+      echo "Ops service annotations:"
+      OPS_ANNOTATIONS=$(kubectl get service "$OPS_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}')
+      
+      if [ -n "$OPS_ANNOTATIONS" ]; then
+        echo "$OPS_ANNOTATIONS"
+      else
+        echo "ℹ️  No annotations on ops service"
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "Verifying custom annotations are applied..."
+      {{- if .Values.podAnnotations }}
+      echo "Checking for custom pod annotations from values..."
+      POD_ANNOTATIONS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}')
+      
+      {{- range $key, $value := .Values.podAnnotations }}
+      CUSTOM_ANNOTATION=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.{{ $key | replace "." "\\." }}}')
+      if [ -n "$CUSTOM_ANNOTATION" ]; then
+        echo "✅ Custom annotation found: {{ $key }} = $CUSTOM_ANNOTATION"
+      else
+        echo "⚠️  WARNING: Custom annotation not found: {{ $key }}"
+      fi
+      {{- end }}
+      {{- else }}
+      echo "ℹ️  No custom pod annotations configured in values"
+      {{- end }}
+      
+      echo ""
+      echo "Validating annotation format..."
+      ALL_ANNOTATIONS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}')
+      
+      # Check if annotations are valid JSON
+      if echo "$ALL_ANNOTATIONS" | grep -q "{"; then
+        echo "✅ Annotations are in valid format"
+      else
+        echo "⚠️  WARNING: Could not parse annotations"
+      fi
+      
+      echo ""
+      echo "Checking for Helm-managed annotations..."
+      HELM_ANNOTATIONS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}' | grep -o "helm.sh[^,}]*" || echo "")
+      
+      if [ -n "$HELM_ANNOTATIONS" ]; then
+        echo "Helm annotations found:"
+        echo "$HELM_ANNOTATIONS"
+      else
+        echo "ℹ️  No Helm-specific annotations (normal for test pods)"
+      fi
+      
+      echo ""
+      echo "Verifying deployment annotations..."
+      DEPLOYMENT_NAME="{{ include "boundary.worker.deploymentName" . }}"
+      DEPLOYMENT_ANNOTATIONS=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}')
+      
+      if [ -n "$DEPLOYMENT_ANNOTATIONS" ]; then
+        echo "Deployment annotations:"
+        echo "$DEPLOYMENT_ANNOTATIONS"
+      else
+        echo "ℹ️  No annotations on deployment"
+      fi
+      
+      echo ""
+      echo "Checking annotation count..."
+      ANNOTATION_COUNT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}' | grep -o '":' | wc -l)
+      echo "Total pod annotations: $ANNOTATION_COUNT"
+      
+      if [ "$ANNOTATION_COUNT" -lt 1 ]; then
+        echo "⚠️  WARNING: Very few annotations on pod"
+      else
+        echo "✅ Pod has annotations"
+      fi
+      
+      echo ""
+      echo "Listing all pod annotations..."
+      kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}' | \
+        sed 's/,/\n/g' | sed 's/[{}"]//g' | head -20
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ANNOTATION CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Annotation Summary:"
+      echo "  Config Checksum: $([ -n "$CONFIG_CHECKSUM" ] && echo "Present" || echo "Missing")"
+      echo "  Values Checksum: $([ -n "$VALUES_CHECKSUM" ] && echo "Present" || echo "Missing")"
+      echo "  Total Annotations: $ANNOTATION_COUNT"
+      {{- if .Values.podAnnotations }}
+      echo "  Custom Annotations: Configured"
+      {{- else }}
+      echo "  Custom Annotations: None"
+      {{- end }}
+{{- end }}

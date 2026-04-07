@@ -1,0 +1,84 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-deployment-ready"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Deployment Exists and Ready"
+      echo "=========================================="
+      
+      DEPLOYMENT_NAME="{{ include "boundary.worker.deploymentName" . }}"
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Checking if deployment exists..."
+      if ! kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+        echo "❌ FAILED: Deployment $DEPLOYMENT_NAME does not exist"
+        exit 1
+      fi
+      echo "✅ Deployment exists"
+      
+      echo "Checking deployment desired replicas..."
+      DESIRED_REPLICAS=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')
+      if [ "$DESIRED_REPLICAS" != "1" ]; then
+        echo "❌ FAILED: Expected 1 replica, got $DESIRED_REPLICAS"
+        exit 1
+      fi
+      echo "✅ Desired replicas set to 1"
+      
+      echo "Checking if at least 1 replica is ready..."
+      READY_REPLICAS=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}')
+      if [ -z "$READY_REPLICAS" ] || [ "$READY_REPLICAS" -lt 1 ]; then
+        echo "❌ FAILED: No ready replicas found (got: $READY_REPLICAS)"
+        kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ At least 1 replica is ready"
+      
+      echo "Validating deployment selector labels..."
+      SELECTOR=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.selector.matchLabels}')
+      if [ -z "$SELECTOR" ]; then
+        echo "❌ FAILED: Deployment selector labels not found"
+        exit 1
+      fi
+      echo "✅ Deployment selector labels are set"
+      
+      echo "Checking if pod labels match deployment selector..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} -o jsonpath='{.items[0].metadata.name}')
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: No pod found matching deployment selector"
+        exit 1
+      fi
+      echo "✅ Pod labels match deployment selector"
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL CHECKS PASSED"
+      echo "=========================================="
+      echo "Deployment: $DEPLOYMENT_NAME"
+      echo "Ready Replicas: $READY_REPLICAS/$DESIRED_REPLICAS"
+      echo "Pod: $POD_NAME"
+{{- end }}
