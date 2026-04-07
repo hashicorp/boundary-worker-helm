@@ -14,9 +14,15 @@ metadata:
 spec:
   serviceAccountName: "{{ include "boundary.fullname" . }}-test"
   restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
   containers:
   - name: test
     image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
     command: ["/bin/sh", "-c"]
     args:
     - |

@@ -11,6 +11,7 @@ metadata:
     "helm.sh/hook": test
     "helm.sh/hook-weight": "-10"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -25,12 +26,29 @@ metadata:
     "helm.sh/hook-weight": "-10"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 rules:
-  - apiGroups: ["", "apps", "networking.k8s.io", "policy"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
+  # Read-only access to core resources needed for testing
   - apiGroups: [""]
-    resources: ["pods/exec", "pods/log"]
-    verbs: ["get", "create"]
+    resources: ["pods", "services", "configmaps", "persistentvolumeclaims", "serviceaccounts", "events", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to apps resources
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to RBAC resources for validation
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list"]
+  # Read-only access to network policies
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list"]
+  # Pod logs and exec for testing (minimal required)
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

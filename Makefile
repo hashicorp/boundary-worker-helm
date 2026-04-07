@@ -190,39 +190,24 @@ kubescape-scan:
 	@echo "================================"
 	@if [ -f kubescape-output.json ]; then \
 		if command -v jq >/dev/null 2>&1; then \
-			RISK_SCORE=$$(jq -r '.summaryDetails.score // 0' kubescape-output.json); \
-			FAILED_RESOURCES=$$(jq -r '.summaryDetails.ResourceCounters.failedResources // 0' kubescape-output.json); \
-			PASSED_RESOURCES=$$(jq -r '.summaryDetails.ResourceCounters.passedResources // 0' kubescape-output.json); \
 			COMPLIANCE_SCORE=$$(jq -r '.summaryDetails.complianceScore // 0' kubescape-output.json); \
+			PASSED_RESOURCES=$$(jq -r '.summaryDetails.ResourceCounters.passedResources // 0' kubescape-output.json); \
+			FAILED_CONTROLS=$$(jq '[.summaryDetails.controls[] | select(.failedResources != null and .failedResources > 0)] | length' kubescape-output.json); \
 		else \
 			echo "⚠️  jq not found, using grep fallback (less reliable)"; \
-			RISK_SCORE=$$(grep -o '"score":[0-9.]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
-			FAILED_RESOURCES=$$(grep -o '"failedResources":[0-9]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
-			PASSED_RESOURCES=$$(grep -o '"passedResources":[0-9]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
 			COMPLIANCE_SCORE="N/A"; \
+			PASSED_RESOURCES=$$(grep -o '"passedResources":[0-9]*' kubescape-output.json | head -1 | cut -d':' -f2 || echo "0"); \
+			FAILED_CONTROLS=0; \
 		fi; \
-		echo "  Risk Score: $$RISK_SCORE"; \
-		echo "  Compliance Score: $$COMPLIANCE_SCORE"; \
-		echo "  Failed Resources: $$FAILED_RESOURCES"; \
+		echo "  Compliance Score: $$COMPLIANCE_SCORE%"; \
 		echo "  Passed Resources: $$PASSED_RESOURCES"; \
+		echo "  Failed Controls: $$FAILED_CONTROLS"; \
 		echo ""; \
-		if [ "$$FAILED_RESOURCES" -gt 0 ]; then \
-			RISK_THRESHOLD=7; \
-			if command -v awk >/dev/null 2>&1; then \
-				IS_ABOVE_THRESHOLD=$$(awk -v score="$$RISK_SCORE" -v threshold="$$RISK_THRESHOLD" 'BEGIN { print (score > threshold) ? 1 : 0 }'); \
-			else \
-				IS_ABOVE_THRESHOLD=$$(echo "$$RISK_SCORE > $$RISK_THRESHOLD" | bc -l 2>/dev/null || echo 0); \
-			fi; \
-			if [ "$$IS_ABOVE_THRESHOLD" = "1" ]; then \
-				echo "❌ Kubescape scan FAILED: Risk score $$RISK_SCORE is above threshold ($$RISK_THRESHOLD)"; \
-				echo "   Failed resources: $$FAILED_RESOURCES"; \
-				exit 1; \
-			else \
-				echo "⚠️  Kubescape scan completed with warnings: Risk score $$RISK_SCORE (threshold: $$RISK_THRESHOLD)"; \
-				echo "   Failed resources: $$FAILED_RESOURCES"; \
-			fi; \
+		if [ "$$FAILED_CONTROLS" -gt 0 ]; then \
+			echo "❌ Kubescape scan FAILED: $$FAILED_CONTROLS control(s) have failed resources"; \
+			exit 1; \
 		else \
-			echo "✅ Kubescape scan passed! Risk score: $$RISK_SCORE"; \
+			echo "✅ Kubescape scan passed! All controls passed (compliance: $$COMPLIANCE_SCORE%)"; \
 		fi; \
 	else \
 		echo "⚠️  Kubescape output file not found"; \
@@ -312,7 +297,7 @@ acceptance-setup: acceptance-cluster
 	@echo "================================"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  - Install Helm chart: make acceptance-helm"
+	@echo "  - Install Helm chart"
 	@echo "  - Run tests: make acceptance-test"
 	@echo "  - Full workflow: make acceptance-full"
 	@echo "  - Cleanup: make acceptance-cleanup"

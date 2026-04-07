@@ -15,3 +15,17 @@ KSV-0021
 # Justification: HashiCorp officially publishes Boundary Enterprise images on Docker Hub
 # This is the official and trusted source for Boundary images
 KSV-0125
+
+# KSV-0053: RBAC pods/exec permissions
+# Justification: 9 test pods require exec permissions to validate worker pod functionality
+# Tests: test-e2e-worker, test-network-connectivity, test-restart-resilience, 
+#        test-security-context, test-volume-mounts, test-worker-auth,
+#        test-worker-config-loaded, test-worker-ports, test-worker-process
+# Scope: Test namespace only, ephemeral execution during helm test
+KSV-0053
+
+# KSV-0113: RBAC secrets access (read-only)
+# Justification: 2 test pods need read-only secrets access for validation
+# Tests: test-cleanup (Helm release secrets), test-image-config (image pull secrets)
+# Scope: Read-only access, test namespace only, ephemeral execution
+KSV-0113
