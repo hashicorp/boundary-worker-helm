@@ -1,0 +1,103 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-configmap"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: ConfigMap Exists and Valid"
+      echo "=========================================="
+      
+      CONFIGMAP_NAME="{{ include "boundary.worker.configmapName" . }}"
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Checking if ConfigMap exists..."
+      if ! kubectl get configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+        echo "❌ FAILED: ConfigMap $CONFIGMAP_NAME does not exist"
+        exit 1
+      fi
+      echo "✅ ConfigMap exists"
+      
+      echo "Checking if ConfigMap contains boundary-worker.hcl key..."
+      if ! kubectl get configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" -o jsonpath='{.data.boundary-worker\.hcl}' > /dev/null 2>&1; then
+        echo "❌ FAILED: ConfigMap does not contain boundary-worker.hcl key"
+        kubectl describe configmap "$CONFIGMAP_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ ConfigMap contains boundary-worker.hcl key"
+      
+      echo "Validating configuration is not empty..."
+      CONFIG_CONTENT=$(kubectl get configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" -o jsonpath='{.data.boundary-worker\.hcl}')
+      if [ -z "$CONFIG_CONTENT" ]; then
+        echo "❌ FAILED: Configuration content is empty"
+        exit 1
+      fi
+      CONFIG_LENGTH=$(echo "$CONFIG_CONTENT" | wc -c)
+      echo "✅ Configuration is not empty (size: $CONFIG_LENGTH bytes)"
+      
+      echo "Checking for required configuration sections..."
+      
+      # Check for listener section
+      if ! echo "$CONFIG_CONTENT" | grep -q "listener"; then
+        echo "❌ FAILED: Configuration missing 'listener' section"
+        exit 1
+      fi
+      echo "✅ Found 'listener' section"
+      
+      # Check for worker section
+      if ! echo "$CONFIG_CONTENT" | grep -q "worker"; then
+        echo "❌ FAILED: Configuration missing 'worker' section"
+        exit 1
+      fi
+      echo "✅ Found 'worker' section"
+      
+      echo "Checking for POD_NAME_LOWER placeholder (if using dynamic naming)..."
+      if echo "$CONFIG_CONTENT" | grep -q '\${POD_NAME_LOWER}'; then
+        echo "✅ Found POD_NAME_LOWER placeholder for dynamic naming"
+      else
+        echo "ℹ️  No POD_NAME_LOWER placeholder found (static naming may be used)"
+      fi
+      
+      echo "Validating HCL syntax (basic check)..."
+      # Check for balanced braces
+      OPEN_BRACES=$(echo "$CONFIG_CONTENT" | grep -o "{" | wc -l)
+      CLOSE_BRACES=$(echo "$CONFIG_CONTENT" | grep -o "}" | wc -l)
+      if [ "$OPEN_BRACES" -ne "$CLOSE_BRACES" ]; then
+        echo "❌ FAILED: Unbalanced braces in configuration (open: $OPEN_BRACES, close: $CLOSE_BRACES)"
+        exit 1
+      fi
+      echo "✅ Configuration has balanced braces"
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL CHECKS PASSED"
+      echo "=========================================="
+      echo "ConfigMap: $CONFIGMAP_NAME"
+      echo "Configuration size: $CONFIG_LENGTH bytes"
+      echo ""
+      echo "Configuration preview (first 10 lines):"
+      echo "$CONFIG_CONTENT" | head -10
+{{- end }}

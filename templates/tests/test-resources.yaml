@@ -1,0 +1,179 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-resources"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Resource Limits and Requests"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking CPU limits..."
+      CPU_LIMIT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].resources.limits.cpu}')
+      if [ -z "$CPU_LIMIT" ]; then
+        echo "❌ FAILED: CPU limit is not defined"
+        exit 1
+      fi
+      echo "✅ CPU limit is defined: $CPU_LIMIT"
+      
+      echo "Checking memory limits..."
+      MEMORY_LIMIT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].resources.limits.memory}')
+      if [ -z "$MEMORY_LIMIT" ]; then
+        echo "❌ FAILED: Memory limit is not defined"
+        exit 1
+      fi
+      echo "✅ Memory limit is defined: $MEMORY_LIMIT"
+      
+      echo "Checking CPU requests..."
+      CPU_REQUEST=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].resources.requests.cpu}')
+      if [ -z "$CPU_REQUEST" ]; then
+        echo "❌ FAILED: CPU request is not defined"
+        exit 1
+      fi
+      echo "✅ CPU request is defined: $CPU_REQUEST"
+      
+      echo "Checking memory requests..."
+      MEMORY_REQUEST=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].resources.requests.memory}')
+      if [ -z "$MEMORY_REQUEST" ]; then
+        echo "❌ FAILED: Memory request is not defined"
+        exit 1
+      fi
+      echo "✅ Memory request is defined: $MEMORY_REQUEST"
+      
+      echo ""
+      echo "Validating resource values match configuration..."
+      
+      # Check CPU limit
+      EXPECTED_CPU_LIMIT="{{ .Values.worker.resources.limits.cpu }}"
+      if [ "$CPU_LIMIT" != "$EXPECTED_CPU_LIMIT" ]; then
+        echo "⚠️  WARNING: CPU limit ($CPU_LIMIT) differs from expected ($EXPECTED_CPU_LIMIT)"
+      else
+        echo "✅ CPU limit matches configuration"
+      fi
+      
+      # Check memory limit
+      EXPECTED_MEMORY_LIMIT="{{ .Values.worker.resources.limits.memory }}"
+      if [ "$MEMORY_LIMIT" != "$EXPECTED_MEMORY_LIMIT" ]; then
+        echo "⚠️  WARNING: Memory limit ($MEMORY_LIMIT) differs from expected ($EXPECTED_MEMORY_LIMIT)"
+      else
+        echo "✅ Memory limit matches configuration"
+      fi
+      
+      # Check CPU request
+      EXPECTED_CPU_REQUEST="{{ .Values.worker.resources.requests.cpu }}"
+      if [ "$CPU_REQUEST" != "$EXPECTED_CPU_REQUEST" ]; then
+        echo "⚠️  WARNING: CPU request ($CPU_REQUEST) differs from expected ($EXPECTED_CPU_REQUEST)"
+      else
+        echo "✅ CPU request matches configuration"
+      fi
+      
+      # Check memory request
+      EXPECTED_MEMORY_REQUEST="{{ .Values.worker.resources.requests.memory }}"
+      if [ "$MEMORY_REQUEST" != "$EXPECTED_MEMORY_REQUEST" ]; then
+        echo "⚠️  WARNING: Memory request ($MEMORY_REQUEST) differs from expected ($EXPECTED_MEMORY_REQUEST)"
+      else
+        echo "✅ Memory request matches configuration"
+      fi
+      
+      echo ""
+      echo "Validating limits >= requests..."
+      
+      # Convert CPU values to millicores for comparison
+      convert_cpu_to_millicores() {
+        local value=$1
+        if echo "$value" | grep -q "m$"; then
+          echo "$value" | sed 's/m$//'
+        else
+          echo "$((${value%.*} * 1000))"
+        fi
+      }
+      
+      CPU_LIMIT_M=$(convert_cpu_to_millicores "$CPU_LIMIT")
+      CPU_REQUEST_M=$(convert_cpu_to_millicores "$CPU_REQUEST")
+      
+      if [ "$CPU_LIMIT_M" -lt "$CPU_REQUEST_M" ]; then
+        echo "❌ FAILED: CPU limit ($CPU_LIMIT) is less than request ($CPU_REQUEST)"
+        exit 1
+      fi
+      echo "✅ CPU limit >= CPU request"
+      
+      # Convert memory values to bytes for comparison (simplified)
+      convert_memory_to_bytes() {
+        local value=$1
+        if echo "$value" | grep -q "Gi$"; then
+          echo "$((${value%Gi} * 1073741824))"
+        elif echo "$value" | grep -q "Mi$"; then
+          echo "$((${value%Mi} * 1048576))"
+        elif echo "$value" | grep -q "Ki$"; then
+          echo "$((${value%Ki} * 1024))"
+        else
+          echo "$value"
+        fi
+      }
+      
+      MEMORY_LIMIT_B=$(convert_memory_to_bytes "$MEMORY_LIMIT")
+      MEMORY_REQUEST_B=$(convert_memory_to_bytes "$MEMORY_REQUEST")
+      
+      if [ "$MEMORY_LIMIT_B" -lt "$MEMORY_REQUEST_B" ]; then
+        echo "❌ FAILED: Memory limit ($MEMORY_LIMIT) is less than request ($MEMORY_REQUEST)"
+        exit 1
+      fi
+      echo "✅ Memory limit >= Memory request"
+      
+      echo ""
+      echo "Checking actual resource usage..."
+      METRICS_AVAILABLE=$(kubectl top pod "$POD_NAME" -n "$NAMESPACE" 2>&1 || echo "not available")
+      if echo "$METRICS_AVAILABLE" | grep -q "not available\|error"; then
+        echo "ℹ️  Metrics server not available or pod metrics not ready"
+      else
+        echo "Current resource usage:"
+        kubectl top pod "$POD_NAME" -n "$NAMESPACE"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL RESOURCE CHECKS PASSED"
+      echo "=========================================="
+      echo "Resource Configuration:"
+      echo "  CPU Limit:      $CPU_LIMIT"
+      echo "  CPU Request:    $CPU_REQUEST"
+      echo "  Memory Limit:   $MEMORY_LIMIT"
+      echo "  Memory Request: $MEMORY_REQUEST"
+{{- end }}

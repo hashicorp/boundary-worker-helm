@@ -1,0 +1,104 @@
+name: Release Pipeline
+
+on:
+  push:
+    branches: [yash/actions]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        run: make setup-helm
+
+      - name: Setup Kubeconform
+        run: make setup-kubeconform
+
+      - name: Run Helm Lint & Kubernetes Validation
+        run: make lint-helm-k8s
+
+      - name: Upload rendered templates
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-templates
+          path: rendered.yaml
+          retention-days: 1
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download rendered templates
+        uses: actions/download-artifact@v4
+        with:
+          name: rendered-templates
+
+      - name: Setup Trivy
+        run: make setup-trivy
+
+      - name: Run Trivy Security Scan
+        run: make trivy-scan
+
+      - name: Setup Kubescape
+        run: make setup-kubescape
+
+      - name: Run Kubescape Security Scan
+        run: make kubescape-scan
+
+      - name: Upload Kubescape results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubescape-results
+          path: kubescape-output.json
+          retention-days: 7
+
+
+  acceptance-test:
+    name: Acceptance Test
+    runs-on: ubuntu-latest
+    needs: unit-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup KIND
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: acceptance
+          config: tests/acceptance/kind-acceptance-config.yaml
+
+      - name: Verify cluster
+        run: |
+          kubectl cluster-info --context kind-acceptance
+          kubectl get nodes --context kind-acceptance
+
+      - name: Install Helm chart and run Helm tests
+        run: make acceptance-helm
+
+      - name: Run acceptance tests
+        run: make acceptance-test
+
+      - name: Cleanup
+        if: always()
+        run: make acceptance-cleanup
+
+  unit-test:
+    name: Unit Test
+    needs: [lint, security]
+    uses: ./.github/workflows/unit-test-job.yml
+
+
+
+  release:
+    name: Release
+    needs: acceptance-test
+    uses: ./.github/workflows/release-job.yml

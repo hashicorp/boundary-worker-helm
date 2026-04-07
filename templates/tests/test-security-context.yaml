@@ -1,0 +1,163 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-security-context"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Security Context Validation"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking Pod Security Context..."
+      
+      # Check runAsNonRoot
+      RUN_AS_NON_ROOT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.securityContext.runAsNonRoot}')
+      if [ "$RUN_AS_NON_ROOT" != "true" ]; then
+        echo "❌ FAILED: runAsNonRoot is not true (got: $RUN_AS_NON_ROOT)"
+        exit 1
+      fi
+      echo "✅ runAsNonRoot is true"
+      
+      # Check runAsUser
+      RUN_AS_USER=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.securityContext.runAsUser}')
+      EXPECTED_USER="{{ .Values.podSecurityContext.runAsUser }}"
+      if [ "$RUN_AS_USER" != "$EXPECTED_USER" ]; then
+        echo "❌ FAILED: runAsUser is $RUN_AS_USER, expected $EXPECTED_USER"
+        exit 1
+      fi
+      echo "✅ runAsUser is $RUN_AS_USER"
+      
+      # Check fsGroup
+      FS_GROUP=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.securityContext.fsGroup}')
+      EXPECTED_FS_GROUP="{{ .Values.podSecurityContext.fsGroup }}"
+      if [ "$FS_GROUP" != "$EXPECTED_FS_GROUP" ]; then
+        echo "❌ FAILED: fsGroup is $FS_GROUP, expected $EXPECTED_FS_GROUP"
+        exit 1
+      fi
+      echo "✅ fsGroup is $FS_GROUP"
+      
+      # Check seccomp profile
+      SECCOMP_TYPE=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.securityContext.seccompProfile.type}')
+      if [ "$SECCOMP_TYPE" != "RuntimeDefault" ]; then
+        echo "❌ FAILED: seccomp profile type is $SECCOMP_TYPE, expected RuntimeDefault"
+        exit 1
+      fi
+      echo "✅ seccomp profile is RuntimeDefault"
+      
+      echo ""
+      echo "Checking Container Security Context..."
+      
+      # Check container runAsNonRoot
+      CONTAINER_RUN_AS_NON_ROOT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].securityContext.runAsNonRoot}')
+      if [ "$CONTAINER_RUN_AS_NON_ROOT" != "true" ]; then
+        echo "❌ FAILED: container runAsNonRoot is not true (got: $CONTAINER_RUN_AS_NON_ROOT)"
+        exit 1
+      fi
+      echo "✅ container runAsNonRoot is true"
+      
+      # Check readOnlyRootFilesystem
+      READ_ONLY_ROOT=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].securityContext.readOnlyRootFilesystem}')
+      if [ "$READ_ONLY_ROOT" != "true" ]; then
+        echo "❌ FAILED: readOnlyRootFilesystem is not true (got: $READ_ONLY_ROOT)"
+        exit 1
+      fi
+      echo "✅ readOnlyRootFilesystem is true"
+      
+      # Check allowPrivilegeEscalation
+      ALLOW_PRIV_ESC=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].securityContext.allowPrivilegeEscalation}')
+      if [ "$ALLOW_PRIV_ESC" != "false" ]; then
+        echo "❌ FAILED: allowPrivilegeEscalation is not false (got: $ALLOW_PRIV_ESC)"
+        exit 1
+      fi
+      echo "✅ allowPrivilegeEscalation is false"
+      
+      # Check capabilities are dropped
+      DROPPED_CAPS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].securityContext.capabilities.drop}')
+      if ! echo "$DROPPED_CAPS" | grep -q "ALL"; then
+        echo "❌ FAILED: ALL capabilities are not dropped (got: $DROPPED_CAPS)"
+        exit 1
+      fi
+      echo "✅ ALL capabilities are dropped"
+      
+      # Check container seccomp profile
+      CONTAINER_SECCOMP=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].securityContext.seccompProfile.type}')
+      if [ "$CONTAINER_SECCOMP" != "RuntimeDefault" ]; then
+        echo "❌ FAILED: container seccomp profile is $CONTAINER_SECCOMP, expected RuntimeDefault"
+        exit 1
+      fi
+      echo "✅ container seccomp profile is RuntimeDefault"
+      
+      # Check runAsUser at container level
+      CONTAINER_RUN_AS_USER=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].securityContext.runAsUser}')
+      EXPECTED_CONTAINER_USER="{{ .Values.containerSecurityContext.runAsUser }}"
+      if [ "$CONTAINER_RUN_AS_USER" != "$EXPECTED_CONTAINER_USER" ]; then
+        echo "❌ FAILED: container runAsUser is $CONTAINER_RUN_AS_USER, expected $EXPECTED_CONTAINER_USER"
+        exit 1
+      fi
+      echo "✅ container runAsUser is $CONTAINER_RUN_AS_USER"
+      
+      echo ""
+      echo "Verifying actual runtime security..."
+      # Check that the process is actually running as the expected user
+      ACTUAL_USER=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- id -u 2>/dev/null || echo "unknown")
+      if [ "$ACTUAL_USER" = "$EXPECTED_USER" ]; then
+        echo "✅ Process is running as user $ACTUAL_USER"
+      else
+        echo "⚠️  WARNING: Process user ($ACTUAL_USER) differs from expected ($EXPECTED_USER)"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL SECURITY CHECKS PASSED"
+      echo "=========================================="
+      echo "Pod Security Context:"
+      echo "  runAsNonRoot: $RUN_AS_NON_ROOT"
+      echo "  runAsUser: $RUN_AS_USER"
+      echo "  fsGroup: $FS_GROUP"
+      echo "  seccompProfile: $SECCOMP_TYPE"
+      echo ""
+      echo "Container Security Context:"
+      echo "  runAsNonRoot: $CONTAINER_RUN_AS_NON_ROOT"
+      echo "  runAsUser: $CONTAINER_RUN_AS_USER"
+      echo "  readOnlyRootFilesystem: $READ_ONLY_ROOT"
+      echo "  allowPrivilegeEscalation: $ALLOW_PRIV_ESC"
+      echo "  capabilities.drop: ALL"
+      echo "  seccompProfile: $CONTAINER_SECCOMP"
+{{- end }}

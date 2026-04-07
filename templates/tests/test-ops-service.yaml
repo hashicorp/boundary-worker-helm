@@ -1,0 +1,121 @@
+{{- if and .Values.worker .Values.worker.service.ops.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-ops-service"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Ops Service Accessibility"
+      echo "=========================================="
+      
+      SERVICE_NAME="{{ include "boundary.worker.ops.serviceName" . }}"
+      NAMESPACE="{{ .Release.Namespace }}"
+      EXPECTED_TYPE="{{ .Values.worker.service.ops.type }}"
+      EXPECTED_PORT="{{ .Values.worker.service.ops.port }}"
+      
+      echo "Checking if ops service exists..."
+      if ! kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+        echo "❌ FAILED: Ops service $SERVICE_NAME does not exist"
+        exit 1
+      fi
+      echo "✅ Ops service exists"
+      
+      echo "Verifying service type is ClusterIP..."
+      SERVICE_TYPE=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.type}')
+      if [ "$SERVICE_TYPE" != "$EXPECTED_TYPE" ]; then
+        echo "❌ FAILED: Service type is $SERVICE_TYPE, expected $EXPECTED_TYPE"
+        exit 1
+      fi
+      echo "✅ Service type is ClusterIP"
+      
+      echo "Confirming service port 9203 is exposed..."
+      SERVICE_PORT=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].port}')
+      if [ "$SERVICE_PORT" != "$EXPECTED_PORT" ]; then
+        echo "❌ FAILED: Service port is $SERVICE_PORT, expected $EXPECTED_PORT"
+        exit 1
+      fi
+      echo "✅ Service port is correctly set to $SERVICE_PORT"
+      
+      echo "Validating service selector matches worker pod labels..."
+      SELECTOR=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.selector}')
+      if [ -z "$SELECTOR" ]; then
+        echo "❌ FAILED: Service selector is empty"
+        exit 1
+      fi
+      echo "✅ Service selector is set"
+      
+      # Check if selector includes component=worker
+      if ! kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.selector.app\.kubernetes\.io/component}' | grep -q "worker"; then
+        echo "❌ FAILED: Service selector does not include component=worker"
+        exit 1
+      fi
+      echo "✅ Service selector includes component=worker"
+      
+      echo "Checking service endpoints are populated..."
+      ENDPOINTS=$(kubectl get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[*].addresses[*].ip}')
+      if [ -z "$ENDPOINTS" ]; then
+        echo "❌ FAILED: Service has no endpoints"
+        kubectl describe service "$SERVICE_NAME" -n "$NAMESPACE"
+        kubectl describe endpoints "$SERVICE_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ Service endpoints are populated: $ENDPOINTS"
+      
+      echo "Testing TCP connectivity to ops port from within cluster..."
+      SERVICE_IP=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.clusterIP}')
+      if [ -z "$SERVICE_IP" ] || [ "$SERVICE_IP" = "None" ]; then
+        echo "❌ FAILED: Service has no ClusterIP"
+        exit 1
+      fi
+      
+      echo "Attempting to connect to $SERVICE_IP:$SERVICE_PORT..."
+      if timeout 5 nc -zv "$SERVICE_IP" "$SERVICE_PORT" 2>&1; then
+        echo "✅ TCP connection to ops port successful"
+      else
+        echo "⚠️  WARNING: Could not establish TCP connection (service may still be initializing)"
+      fi
+      
+      echo "Checking target port configuration..."
+      TARGET_PORT=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].targetPort}')
+      echo "✅ Target port is set to: $TARGET_PORT"
+      
+      echo "Verifying port name..."
+      PORT_NAME=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].name}')
+      if [ -n "$PORT_NAME" ]; then
+        echo "✅ Port name is set to: $PORT_NAME"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL CHECKS PASSED"
+      echo "=========================================="
+      echo "Service: $SERVICE_NAME"
+      echo "Type: $SERVICE_TYPE"
+      echo "ClusterIP: $SERVICE_IP"
+      echo "Port: $SERVICE_PORT"
+      echo "Target Port: $TARGET_PORT"
+      echo "Endpoints: $ENDPOINTS"
+{{- end }}

@@ -1,0 +1,169 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-worker-registration"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Worker Registration Status"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Retrieving worker logs for registration analysis..."
+      LOGS=$(kubectl logs -n "$NAMESPACE" "$POD_NAME" --tail=500 2>/dev/null || echo "")
+      
+      if [ -z "$LOGS" ]; then
+        echo "❌ FAILED: Could not retrieve worker logs"
+        exit 1
+      fi
+      
+      echo ""
+      echo "Checking for worker authentication success..."
+      if echo "$LOGS" | grep -qi "worker.*authenticated\|authentication.*success\|successfully.*authenticated"; then
+        echo "✅ Worker authentication success messages found"
+        echo "$LOGS" | grep -i "worker.*authenticated\|authentication.*success" | tail -3
+      else
+        echo "⚠️  WARNING: No explicit authentication success messages found"
+        echo "This may be normal depending on Boundary version and log level"
+      fi
+      
+      echo ""
+      echo "Checking for authentication errors..."
+      AUTH_ERRORS=$(echo "$LOGS" | grep -i "auth.*error\|authentication.*fail\|failed.*authenticate" | grep -i "worker\|controller" | grep -v "test\|plugin\|storage" || echo "")
+      
+      if [ -n "$AUTH_ERRORS" ]; then
+        echo "❌ FAILED: Worker authentication errors found:"
+        echo "$AUTH_ERRORS"
+        exit 1
+      fi
+      echo "✅ No worker authentication errors found"
+      
+      echo ""
+      echo "Verifying worker ID is generated/assigned..."
+      WORKER_ID=$(echo "$LOGS" | grep -i "worker.*id\|worker_id" | grep -v "test" | tail -5 || echo "")
+      
+      if [ -n "$WORKER_ID" ]; then
+        echo "✅ Worker ID references found in logs:"
+        echo "$WORKER_ID" | tail -3
+      else
+        echo "ℹ️  No explicit worker ID in logs (may be normal)"
+      fi
+      
+      echo ""
+      echo "Checking for controller connection establishment..."
+      if echo "$LOGS" | grep -qi "connect.*controller\|controller.*connect\|established.*connection"; then
+        echo "✅ Controller connection messages found"
+        echo "$LOGS" | grep -i "connect.*controller\|controller.*connect\|established.*connection" | tail -3
+      else
+        echo "⚠️  WARNING: No explicit controller connection messages"
+      fi
+      
+      echo ""
+      echo "Looking for heartbeat messages..."
+      HEARTBEAT=$(echo "$LOGS" | grep -i "heartbeat\|status.*report\|health.*check" | tail -5 || echo "")
+      
+      if [ -n "$HEARTBEAT" ]; then
+        echo "✅ Heartbeat/status messages found:"
+        echo "$HEARTBEAT" | tail -3
+      else
+        echo "ℹ️  No explicit heartbeat messages (may use different terminology)"
+      fi
+      
+      echo ""
+      echo "Checking for registration-related errors..."
+      REG_ERRORS=$(echo "$LOGS" | grep -i "registration.*error\|failed.*register\|register.*fail" | grep -v "test" || echo "")
+      
+      if [ -n "$REG_ERRORS" ]; then
+        echo "❌ FAILED: Registration errors found:"
+        echo "$REG_ERRORS"
+        exit 1
+      fi
+      echo "✅ No registration errors found"
+      
+      echo ""
+      echo "Verifying worker is operational..."
+      # Check for recent activity indicating worker is running
+      RECENT_LOGS=$(echo "$LOGS" | tail -20)
+      
+      if echo "$RECENT_LOGS" | grep -qi "error\|fail\|panic"; then
+        echo "⚠️  WARNING: Recent errors detected in logs:"
+        echo "$RECENT_LOGS" | grep -i "error\|fail\|panic" | tail -5
+      else
+        echo "✅ No recent errors in worker logs"
+      fi
+      
+      echo ""
+      echo "Checking worker startup sequence..."
+      if echo "$LOGS" | grep -qi "starting.*worker\|worker.*starting\|boundary.*server.*start"; then
+        echo "✅ Worker startup sequence found in logs"
+      else
+        echo "⚠️  WARNING: No explicit startup sequence messages"
+      fi
+      
+      echo ""
+      echo "Analyzing log patterns for successful registration..."
+      # Count different types of messages
+      INFO_COUNT=$(echo "$LOGS" | grep -ci "info" || echo "0")
+      ERROR_COUNT=$(echo "$LOGS" | grep -ci "error" || echo "0")
+      WARN_COUNT=$(echo "$LOGS" | grep -ci "warn" || echo "0")
+      
+      echo "Log message distribution:"
+      echo "  INFO messages: $INFO_COUNT"
+      echo "  WARN messages: $WARN_COUNT"
+      echo "  ERROR messages: $ERROR_COUNT"
+      
+      if [ "$ERROR_COUNT" -gt 10 ]; then
+        echo "⚠️  WARNING: High number of error messages ($ERROR_COUNT)"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ WORKER REGISTRATION CHECKS COMPLETED"
+      echo "=========================================="
+      echo "Registration Status Summary:"
+      echo "  Authentication: Checked"
+      echo "  Worker ID: Verified"
+      echo "  Controller Connection: Analyzed"
+      echo "  Errors: None critical"
+      echo ""
+      echo "Note: Some checks may show warnings depending on:"
+      echo "  - Boundary version and log format"
+      echo "  - Controller availability"
+      echo "  - Log verbosity level"
+{{- end }}

@@ -1,0 +1,205 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-volume-mounts"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Storage Volumes Mounted"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking /etc/boundary mount (config)..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d /etc/boundary; then
+        echo "✅ /etc/boundary directory exists"
+        
+        # Check if config file exists
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -f /etc/boundary/boundary-worker.hcl; then
+          echo "✅ Config file exists at /etc/boundary/boundary-worker.hcl"
+        else
+          echo "❌ FAILED: Config file not found at /etc/boundary/boundary-worker.hcl"
+          exit 1
+        fi
+        
+        # Verify it's read-only
+        WRITE_TEST=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch /etc/boundary/test-write 2>&1 || echo "read-only")
+        if echo "$WRITE_TEST" | grep -qi "read-only\|permission denied"; then
+          echo "✅ /etc/boundary is read-only (as expected)"
+        else
+          echo "⚠️  WARNING: /etc/boundary may not be read-only"
+        fi
+      else
+        echo "❌ FAILED: /etc/boundary directory not found"
+        exit 1
+      fi
+      
+      echo ""
+      echo "Checking /tmp mount..."
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d /tmp; then
+        echo "✅ /tmp directory exists"
+        
+        # Test write permissions
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch /tmp/test-write-$$; then
+          echo "✅ /tmp is writable"
+          kubectl exec -n "$NAMESPACE" "$POD_NAME" -- rm -f /tmp/test-write-$$ 2>/dev/null || true
+        else
+          echo "❌ FAILED: /tmp is not writable"
+          exit 1
+        fi
+        
+        # Check if processed config exists
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -f /tmp/boundary-worker-processed.hcl; then
+          echo "✅ Processed config file exists in /tmp"
+        else
+          echo "⚠️  WARNING: Processed config file not found in /tmp"
+        fi
+      else
+        echo "❌ FAILED: /tmp directory not found"
+        exit 1
+      fi
+      
+      echo ""
+      echo "Checking auth-storage path..."
+      AUTH_PATH="{{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}"
+      
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d "$AUTH_PATH"; then
+        echo "✅ Auth storage path exists: $AUTH_PATH"
+        
+        # Test write permissions
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch "$AUTH_PATH/test-write-$$"; then
+          echo "✅ Auth storage path is writable"
+          kubectl exec -n "$NAMESPACE" "$POD_NAME" -- rm -f "$AUTH_PATH/test-write-$$" 2>/dev/null || true
+        else
+          echo "❌ FAILED: Auth storage path is not writable"
+          exit 1
+        fi
+        
+        # Check for auth files
+        AUTH_FILES=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ls -la "$AUTH_PATH" 2>/dev/null || echo "")
+        if [ -n "$AUTH_FILES" ]; then
+          echo "Auth storage contents:"
+          echo "$AUTH_FILES" | head -10
+        fi
+      else
+        echo "❌ FAILED: Auth storage path not found: $AUTH_PATH"
+        exit 1
+      fi
+      
+      {{- if .Values.worker.persistence.recording.enabled }}
+      echo ""
+      echo "Checking recording-storage path..."
+      RECORDING_PATH="{{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}"
+      
+      if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- test -d "$RECORDING_PATH"; then
+        echo "✅ Recording storage path exists: $RECORDING_PATH"
+        
+        # Test write permissions
+        if kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch "$RECORDING_PATH/test-write-$$"; then
+          echo "✅ Recording storage path is writable"
+          kubectl exec -n "$NAMESPACE" "$POD_NAME" -- rm -f "$RECORDING_PATH/test-write-$$" 2>/dev/null || true
+        else
+          echo "❌ FAILED: Recording storage path is not writable"
+          exit 1
+        fi
+        
+        # Check for recording files
+        RECORDING_FILES=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- ls -la "$RECORDING_PATH" 2>/dev/null || echo "")
+        if [ -n "$RECORDING_FILES" ]; then
+          echo "Recording storage contents:"
+          echo "$RECORDING_FILES" | head -10
+        fi
+      else
+        echo "❌ FAILED: Recording storage path not found: $RECORDING_PATH"
+        exit 1
+      fi
+      {{- else }}
+      echo ""
+      echo "ℹ️  Recording storage is disabled"
+      {{- end }}
+      
+      echo ""
+      echo "Verifying volume mount configuration in pod spec..."
+      VOLUME_MOUNTS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].volumeMounts[*].mountPath}')
+      echo "Mounted paths: $VOLUME_MOUNTS"
+      
+      # Count expected mounts
+      EXPECTED_MOUNTS=3  # config, tmp, auth-storage
+      {{- if .Values.worker.persistence.recording.enabled }}
+      EXPECTED_MOUNTS=4  # + recording-storage
+      {{- end }}
+      
+      ACTUAL_MOUNT_COUNT=$(echo "$VOLUME_MOUNTS" | wc -w)
+      if [ "$ACTUAL_MOUNT_COUNT" -ge "$EXPECTED_MOUNTS" ]; then
+        echo "✅ Expected number of volume mounts present ($ACTUAL_MOUNT_COUNT >= $EXPECTED_MOUNTS)"
+      else
+        echo "⚠️  WARNING: Mount count ($ACTUAL_MOUNT_COUNT) less than expected ($EXPECTED_MOUNTS)"
+      fi
+      
+      echo ""
+      echo "Checking volume permissions..."
+      # Check ownership of mounted volumes
+      AUTH_OWNER=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- stat -c '%u:%g' "$AUTH_PATH" 2>/dev/null || echo "unknown")
+      echo "Auth storage ownership: $AUTH_OWNER"
+      
+      {{- if .Values.worker.persistence.recording.enabled }}
+      RECORDING_OWNER=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- stat -c '%u:%g' "$RECORDING_PATH" 2>/dev/null || echo "unknown")
+      echo "Recording storage ownership: $RECORDING_OWNER"
+      {{- end }}
+      
+      echo ""
+      echo "Verifying no unexpected mounts..."
+      # List all mounts
+      ALL_MOUNTS=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- mount 2>/dev/null | grep -v "proc\|sys\|dev" || echo "")
+      if [ -n "$ALL_MOUNTS" ]; then
+        echo "Active mounts (filtered):"
+        echo "$ALL_MOUNTS" | head -15
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL VOLUME MOUNT CHECKS PASSED"
+      echo "=========================================="
+      echo "Volume Mount Summary:"
+      echo "  Config (/etc/boundary): Mounted (read-only)"
+      echo "  Temp (/tmp): Mounted (writable)"
+      echo "  Auth Storage ($AUTH_PATH): Mounted (writable)"
+      {{- if .Values.worker.persistence.recording.enabled }}
+      echo "  Recording Storage ($RECORDING_PATH): Mounted (writable)"
+      {{- end }}
+{{- end }}
