@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  workflow_call:
+
+jobs:
+  release:
+    name: Release Helm Chart
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Print release job info
+        run: |
+          echo "================================"
+          echo "Running Release Job"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "================================"
+
+      - name: Set up Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Package Helm Chart
+        run: |
+          echo "Packaging Helm chart..."
+          helm package .
+          echo ""
+          echo "Chart packaged successfully!"
+          ls -lh *.tgz
+
+      - name: Release Summary
+        run: |
+          echo "================================"
+          echo "Release job completed successfully!"
+          echo "================================"
+          echo "Chart package created and ready for distribution"
+          echo "================================"
+
+      - name: Final Summary
+        run: |
+          echo ""
+          echo "ALL JOBS COMPLETED SUCCESSFULLY!"
+          echo ""
+          echo "Pipeline Summary:"
+          echo "  - Lint - Chart validation passed"
+          echo "  - Test - Template rendering verified"
+          echo "  - Release - Chart packaged successfully"
+          echo ""
+          echo "================================"

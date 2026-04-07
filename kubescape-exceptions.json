@@ -1,0 +1,129 @@
+[
+  {
+    "name": "exclude-network-policy-customer-managed",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "kind": "Deployment",
+          "name": "boundary-worker-deployment"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0260", "controlName": "Missing network policy"},
+      {"controlID": "C-0030", "controlName": "Ingress and Egress blocked"}
+    ],
+    "description": "EXEMPTION RATIONALE: Network policies are intentionally not included in this Helm chart. Customers deploy this worker in diverse network environments (on-prem, cloud, air-gapped) with varying network security requirements. Network policies must be managed at the infrastructure/platform level by customers to match their specific security posture and compliance requirements. Including default network policies would conflict with customer-managed network security controls."
+  },
+  {
+    "name": "exclude-label-usage",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {
+        "designatorType": "Attributes",
+        "attributes": {
+          "kind": "Deployment",
+          "name": "boundary-worker-deployment"
+        }
+      }
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0076", "controlName": "Label usage for resources"}
+    ],
+    "description": "EXEMPTION RATIONALE: This chart uses Helm's standard label schema (app.kubernetes.io/name, app.kubernetes.io/instance, app.kubernetes.io/version, etc.) which provides comprehensive resource identification and management capabilities. These labels are industry-standard, widely recognized, and sufficient for resource tracking, selection, and lifecycle management. Adding custom labels would be redundant and potentially conflict with customer labeling strategies."
+  },
+  {
+    "name": "exclude-test-rbac-exec-permissions",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Role", "name": "boundary-worker-test"}},
+      {"designatorType": "Attributes", "attributes": {"kind": "RoleBinding", "name": "boundary-worker-test"}},
+      {"designatorType": "Attributes", "attributes": {"kind": "ServiceAccount", "name": "boundary-worker-test"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0002", "controlName": "Prevent containers from allowing command execution"}
+    ],
+    "description": "EXEMPTION RATIONALE: The test suite requires pods/exec permissions to validate worker functionality (9 test files need this). This is acceptable because: (1) Permissions are scoped exclusively to the test namespace, not cluster-wide. (2) Test pods are ephemeral - they only exist during 'helm test' execution and are automatically deleted via hook-delete-policy. (3) All test pods run with restrictive security contexts (runAsNonRoot, readOnlyRootFilesystem, no privilege escalation). (4) No wildcard permissions are used - all resources are explicitly named. (5) This is a standard pattern for Helm chart testing to verify deployment health."
+  },
+  {
+    "name": "exclude-test-rbac-secrets-access",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Role", "name": "boundary-worker-test"}},
+      {"designatorType": "Attributes", "attributes": {"kind": "RoleBinding", "name": "boundary-worker-test"}},
+      {"designatorType": "Attributes", "attributes": {"kind": "ServiceAccount", "name": "boundary-worker-test"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0015", "controlName": "List Kubernetes secrets"}
+    ],
+    "description": "EXEMPTION RATIONALE: Test suite requires read-only secrets access (get/list verbs only) to validate worker authentication configuration (2 test files: test-worker-auth.yaml, test-worker-registration.yaml). This is acceptable because: (1) Permissions are strictly read-only - no create/update/delete/patch capabilities. (2) Access is scoped to the test namespace only. (3) Tests are ephemeral and automatically cleaned up. (4) This validates critical security functionality - ensuring the worker can properly authenticate with the Boundary controller. (5) No secret values are logged or exposed, only existence and structure are validated."
+  },
+  {
+    "name": "exclude-test-pods-naked",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Pod", "namespace": "boundary"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0073", "controlName": "Naked pods"}
+    ],
+    "description": "EXEMPTION RATIONALE: Test pods are intentionally created as standalone Pods (not managed by Deployments/StatefulSets/DaemonSets) because they are ephemeral Helm test resources. This is the standard Helm testing pattern. These pods: (1) Are managed by Helm's hook lifecycle system (helm.sh/hook: test). (2) Are automatically deleted after test completion via hook-delete-policy annotations. (3) Execute once and exit - they are not long-running workloads requiring restart/scaling capabilities. (4) Using a controller (Deployment) for test pods would be inappropriate as it would attempt to maintain replicas of completed test pods. This is by design and follows Helm best practices."
+  },
+  {
+    "name": "exclude-test-pods-sa-access",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Pod", "namespace": "boundary"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0053", "controlName": "Access container service account"}
+    ],
+    "description": "EXEMPTION RATIONALE: Test pods require ServiceAccount token access to interact with the Kubernetes API for validation purposes. This is necessary and secure because: (1) Tests need to validate the deployed resources (pods, services, configmaps, etc.) exist and are configured correctly. (2) The ServiceAccount has minimal RBAC permissions - only read access (get/list/watch) to specific resource types in the test namespace. (3) All operations are read-only - no modifications to cluster state. (4) Test pods are ephemeral and automatically deleted after execution. (5) This is standard practice for Helm chart testing - tests must verify the chart deployed correctly. (6) Alternative approaches (external test runners) would require even broader cluster access."
+  },
+  {
+    "name": "exclude-test-pods-health-probes",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Pod", "namespace": "boundary"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0018", "controlName": "Configured readiness probe"},
+      {"controlID": "C-0056", "controlName": "Configured liveness probe"}
+    ],
+    "description": "EXEMPTION RATIONALE: Health probes (liveness/readiness) are not applicable to test pods because: (1) Test pods are ephemeral, short-lived resources that execute a test script and exit immediately (typically completing in 5-30 seconds). (2) They are not long-running services that need health monitoring or restart capabilities. (3) Test success/failure is determined by the pod's exit code, not by probe responses. (4) Adding health probes would serve no purpose and could interfere with test execution timing. (5) Kubernetes already monitors test pod completion status through the pod phase. This is standard for all Helm test pods and batch/job workloads."
+  },
+  {
+    "name": "exclude-test-pods-network-policy",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Pod", "namespace": "boundary"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0260", "controlName": "Missing network policy"},
+      {"controlID": "C-0030", "controlName": "Ingress and Egress blocked"}
+    ],
+    "description": "EXEMPTION RATIONALE: Test pods require flexible network access to validate the deployed worker's functionality. Network policies are not applied because: (1) Tests need to communicate with the worker pods, services, and potentially external endpoints to validate connectivity. (2) Test pods are ephemeral (5-30 second lifetime) and automatically deleted, minimizing exposure window. (3) All test pods run with restrictive security contexts (runAsNonRoot, readOnlyRootFilesystem, dropped capabilities). (4) Tests perform read-only validation operations - they don't modify cluster state or handle sensitive data. (5) Network policies for test pods would need to be environment-specific and would conflict with the goal of portable, customer-agnostic tests. (6) Production workload (boundary-worker-deployment) network policies are managed separately by customers."
+  },
+  {
+    "name": "exclude-test-pods-label-usage",
+    "policyType": "postureExceptionPolicy",
+    "actions": ["alertOnly"],
+    "resources": [
+      {"designatorType": "Attributes", "attributes": {"kind": "Pod", "namespace": "boundary"}}
+    ],
+    "posturePolicies": [
+      {"controlID": "C-0076", "controlName": "Label usage for resources"}
+    ],
+    "description": "EXEMPTION RATIONALE: Test pods use Helm's standard label schema (app.kubernetes.io/name, app.kubernetes.io/instance, app.kubernetes.io/component=test, etc.) which provides sufficient identification for ephemeral test resources. Additional custom labels are unnecessary because: (1) Test pods are short-lived (5-30 seconds) and automatically cleaned up via Helm hooks. (2) Standard Helm labels enable proper resource selection, tracking, and lifecycle management. (3) The app.kubernetes.io/component=test label clearly identifies these as test resources. (4) Test pods are not production workloads requiring extensive labeling for monitoring, cost allocation, or compliance tracking. (5) Adding custom labels would be redundant and potentially conflict with customer labeling strategies."
+  }
+]

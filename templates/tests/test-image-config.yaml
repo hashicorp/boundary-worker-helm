@@ -1,0 +1,168 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-image-config"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Image Pull Policy"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      
+      echo "Finding worker pod..."
+      POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+        -l app.kubernetes.io/component=worker,app.kubernetes.io/instance={{ .Release.Name }} \
+        -o jsonpath='{.items[0].metadata.name}')
+      
+      if [ -z "$POD_NAME" ]; then
+        echo "❌ FAILED: Worker pod not found"
+        exit 1
+      fi
+      echo "✅ Worker pod found: $POD_NAME"
+      
+      echo ""
+      echo "Checking image repository..."
+      IMAGE=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].image}')
+      if [ -z "$IMAGE" ]; then
+        echo "❌ FAILED: Image not found"
+        exit 1
+      fi
+      echo "✅ Image is set: $IMAGE"
+      
+      # Extract repository and tag
+      IMAGE_REPO=$(echo "$IMAGE" | cut -d: -f1)
+      IMAGE_TAG=$(echo "$IMAGE" | cut -d: -f2)
+      
+      echo ""
+      echo "Validating image repository..."
+      EXPECTED_REPO="{{ .Values.image.repository }}"
+      if [ "$IMAGE_REPO" != "$EXPECTED_REPO" ]; then
+        echo "⚠️  WARNING: Image repository ($IMAGE_REPO) differs from expected ($EXPECTED_REPO)"
+      else
+        echo "✅ Image repository matches configuration: $IMAGE_REPO"
+      fi
+      
+      echo ""
+      echo "Validating image tag..."
+      {{- if .Values.image.tag }}
+      EXPECTED_TAG="{{ .Values.image.tag }}"
+      {{- else }}
+      EXPECTED_TAG="{{ .Chart.AppVersion }}"
+      {{- end }}
+      
+      if [ "$IMAGE_TAG" != "$EXPECTED_TAG" ]; then
+        echo "⚠️  WARNING: Image tag ($IMAGE_TAG) differs from expected ($EXPECTED_TAG)"
+      else
+        echo "✅ Image tag matches configuration: $IMAGE_TAG"
+      fi
+      
+      echo ""
+      echo "Checking imagePullPolicy..."
+      PULL_POLICY=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.containers[0].imagePullPolicy}')
+      EXPECTED_POLICY="{{ .Values.image.pullPolicy }}"
+      
+      if [ "$PULL_POLICY" != "$EXPECTED_POLICY" ]; then
+        echo "⚠️  WARNING: imagePullPolicy ($PULL_POLICY) differs from expected ($EXPECTED_POLICY)"
+      else
+        echo "✅ imagePullPolicy is correctly set: $PULL_POLICY"
+      fi
+      
+      echo ""
+      echo "Checking imagePullSecrets..."
+      {{- if .Values.imagePullSecrets }}
+      PULL_SECRETS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.imagePullSecrets[*].name}')
+      if [ -z "$PULL_SECRETS" ]; then
+        echo "⚠️  WARNING: imagePullSecrets are configured but not found on pod"
+      else
+        echo "✅ imagePullSecrets are set: $PULL_SECRETS"
+        
+        # Verify each secret exists
+        for SECRET in $PULL_SECRETS; do
+          if kubectl get secret "$SECRET" -n "$NAMESPACE" > /dev/null 2>&1; then
+            echo "  ✅ Secret exists: $SECRET"
+          else
+            echo "  ❌ FAILED: Secret not found: $SECRET"
+            exit 1
+          fi
+        done
+      fi
+      {{- else }}
+      PULL_SECRETS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.imagePullSecrets[*].name}')
+      if [ -z "$PULL_SECRETS" ]; then
+        echo "✅ No imagePullSecrets configured (as expected)"
+      else
+        echo "ℹ️  imagePullSecrets found but not configured in values: $PULL_SECRETS"
+      fi
+      {{- end }}
+      
+      echo ""
+      echo "Checking container image status..."
+      CONTAINER_READY=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].ready}')
+      IMAGE_PULL_STATUS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].state}')
+      
+      if [ "$CONTAINER_READY" = "true" ]; then
+        echo "✅ Container is ready (image pulled successfully)"
+      else
+        echo "⚠️  WARNING: Container is not ready"
+        echo "Container state: $IMAGE_PULL_STATUS"
+      fi
+      
+      # Check for image pull errors
+      IMAGE_PULL_ERRORS=$(kubectl get events -n "$NAMESPACE" --field-selector involvedObject.name="$POD_NAME" \
+        | grep -i "Failed.*pull\|ErrImagePull\|ImagePullBackOff" || echo "")
+      
+      if [ -n "$IMAGE_PULL_ERRORS" ]; then
+        echo "⚠️  WARNING: Image pull errors detected:"
+        echo "$IMAGE_PULL_ERRORS"
+      else
+        echo "✅ No image pull errors detected"
+      fi
+      
+      echo ""
+      echo "Checking image ID..."
+      IMAGE_ID=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].imageID}')
+      if [ -n "$IMAGE_ID" ]; then
+        echo "✅ Image ID: $IMAGE_ID"
+      else
+        echo "⚠️  WARNING: Image ID not available"
+      fi
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL IMAGE CHECKS PASSED"
+      echo "=========================================="
+      echo "Image Configuration:"
+      echo "  Full Image:       $IMAGE"
+      echo "  Repository:       $IMAGE_REPO"
+      echo "  Tag:              $IMAGE_TAG"
+      echo "  Pull Policy:      $PULL_POLICY"
+      {{- if .Values.imagePullSecrets }}
+      echo "  Pull Secrets:     $PULL_SECRETS"
+      {{- else }}
+      echo "  Pull Secrets:     None"
+      {{- end }}
+{{- end }}

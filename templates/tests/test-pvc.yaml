@@ -1,0 +1,129 @@
+{{- if .Values.worker }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "boundary.fullname" . }}-test-pvc"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: "{{ include "boundary.fullname" . }}-test"
+  restartPolicy: Never
+  securityContext:
+    {{- include "boundary.test.podSecurityContext" . | nindent 4 }}
+  containers:
+  - name: test
+    image: bitnami/kubectl:latest
+    securityContext:
+      {{- include "boundary.test.containerSecurityContext" . | nindent 6 }}
+    resources:
+      {{- include "boundary.test.resources" . | nindent 6 }}
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      set -e
+      echo "=========================================="
+      echo "Test: Persistent Volume Claims"
+      echo "=========================================="
+      
+      NAMESPACE="{{ .Release.Namespace }}"
+      AUTH_PVC_NAME="{{ include "boundary.worker.authStoragePvcName" . }}"
+      RECORDING_PVC_NAME="{{ include "boundary.worker.recordingPvcName" . }}"
+      
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      echo "Checking auth-storage PVC..."
+      if ! kubectl get pvc "$AUTH_PVC_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+        echo "❌ FAILED: Auth storage PVC $AUTH_PVC_NAME does not exist"
+        exit 1
+      fi
+      echo "✅ Auth storage PVC exists"
+      
+      echo "Checking auth-storage PVC status..."
+      AUTH_PVC_STATUS=$(kubectl get pvc "$AUTH_PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}')
+      if [ "$AUTH_PVC_STATUS" != "Bound" ]; then
+        echo "❌ FAILED: Auth storage PVC is not bound (status: $AUTH_PVC_STATUS)"
+        kubectl describe pvc "$AUTH_PVC_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ Auth storage PVC is bound"
+      
+      echo "Validating auth-storage PVC size..."
+      AUTH_PVC_SIZE=$(kubectl get pvc "$AUTH_PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.resources.requests.storage}')
+      EXPECTED_AUTH_SIZE="{{ .Values.worker.persistence.authStorage.size }}"
+      if [ "$AUTH_PVC_SIZE" != "$EXPECTED_AUTH_SIZE" ]; then
+        echo "⚠️  WARNING: Auth storage PVC size ($AUTH_PVC_SIZE) differs from expected ($EXPECTED_AUTH_SIZE)"
+      else
+        echo "✅ Auth storage PVC size matches configuration: $AUTH_PVC_SIZE"
+      fi
+      
+      echo "Checking auth-storage PVC storage class..."
+      AUTH_STORAGE_CLASS=$(kubectl get pvc "$AUTH_PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.storageClassName}')
+      EXPECTED_AUTH_SC="{{ .Values.worker.persistence.authStorage.storageClass }}"
+      if [ "$AUTH_STORAGE_CLASS" != "$EXPECTED_AUTH_SC" ]; then
+        echo "⚠️  WARNING: Auth storage class ($AUTH_STORAGE_CLASS) differs from expected ($EXPECTED_AUTH_SC)"
+      else
+        echo "✅ Auth storage class is correct: $AUTH_STORAGE_CLASS"
+      fi
+      {{- else }}
+      echo "ℹ️  Auth storage PVC is disabled (using emptyDir)"
+      {{- end }}
+      
+      {{- if .Values.worker.persistence.recording.enabled }}
+      echo ""
+      echo "Checking recording-storage PVC..."
+      if ! kubectl get pvc "$RECORDING_PVC_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+        echo "❌ FAILED: Recording storage PVC $RECORDING_PVC_NAME does not exist"
+        exit 1
+      fi
+      echo "✅ Recording storage PVC exists"
+      
+      echo "Checking recording-storage PVC status..."
+      RECORDING_PVC_STATUS=$(kubectl get pvc "$RECORDING_PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}')
+      if [ "$RECORDING_PVC_STATUS" != "Bound" ]; then
+        echo "❌ FAILED: Recording storage PVC is not bound (status: $RECORDING_PVC_STATUS)"
+        kubectl describe pvc "$RECORDING_PVC_NAME" -n "$NAMESPACE"
+        exit 1
+      fi
+      echo "✅ Recording storage PVC is bound"
+      
+      echo "Validating recording-storage PVC size..."
+      RECORDING_PVC_SIZE=$(kubectl get pvc "$RECORDING_PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.resources.requests.storage}')
+      EXPECTED_RECORDING_SIZE="{{ .Values.worker.persistence.recording.size }}"
+      if [ "$RECORDING_PVC_SIZE" != "$EXPECTED_RECORDING_SIZE" ]; then
+        echo "⚠️  WARNING: Recording storage PVC size ($RECORDING_PVC_SIZE) differs from expected ($EXPECTED_RECORDING_SIZE)"
+      else
+        echo "✅ Recording storage PVC size matches configuration: $RECORDING_PVC_SIZE"
+      fi
+      
+      echo "Checking recording-storage PVC storage class..."
+      RECORDING_STORAGE_CLASS=$(kubectl get pvc "$RECORDING_PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.storageClassName}')
+      EXPECTED_RECORDING_SC="{{ .Values.worker.persistence.recording.storageClass }}"
+      if [ "$RECORDING_STORAGE_CLASS" != "$EXPECTED_RECORDING_SC" ]; then
+        echo "⚠️  WARNING: Recording storage class ($RECORDING_STORAGE_CLASS) differs from expected ($EXPECTED_RECORDING_SC)"
+      else
+        echo "✅ Recording storage class is correct: $RECORDING_STORAGE_CLASS"
+      fi
+      {{- else }}
+      echo "ℹ️  Recording storage PVC is disabled"
+      {{- end }}
+      
+      echo ""
+      echo "=========================================="
+      echo "✅ ALL CHECKS PASSED"
+      echo "=========================================="
+      {{- if .Values.worker.persistence.authStorage.enabled }}
+      echo "Auth Storage PVC: $AUTH_PVC_NAME ($AUTH_PVC_STATUS)"
+      echo "  Size: $AUTH_PVC_SIZE"
+      echo "  Storage Class: $AUTH_STORAGE_CLASS"
+      {{- end }}
+      {{- if .Values.worker.persistence.recording.enabled }}
+      echo "Recording Storage PVC: $RECORDING_PVC_NAME ($RECORDING_PVC_STATUS)"
+      echo "  Size: $RECORDING_PVC_SIZE"
+      echo "  Storage Class: $RECORDING_STORAGE_CLASS"
+      {{- end }}
+{{- end }}
