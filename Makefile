@@ -342,25 +342,43 @@ worker-config:
 	@echo "Login Name: $$BOUNDARY_LOGIN_NAME"
 	@echo ""
 	@echo "Authenticating with password..."
-	@boundary authenticate password \
+	@AUTH_OUT=$$(boundary authenticate password \
 		-login-name $$BOUNDARY_LOGIN_NAME \
-		-password env://BOUNDARY_PASSWORD
-	@echo ""
-	@echo "✅ Successfully authenticated with Boundary"
-	@echo ""
-	@echo "Creating controller-led worker..."
-	@TOKEN_OUT=$$(boundary workers create controller-led 2>&1); \
+		-password env://BOUNDARY_PASSWORD \
+		-keyring-type=none 2>&1); \
 	STATUS=$$?; \
-	echo "$$TOKEN_OUT"; \
 	if [ $$STATUS -ne 0 ]; then \
+		echo "❌ Boundary authentication failed"; \
+		printf '%s\n' "$$AUTH_OUT"; \
+		exit $$STATUS; \
+	fi; \
+	AUTH_TOKEN=$$(printf '%s\n' "$$AUTH_OUT" | awk '/The token is:/ { getline; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", $$0); print $$0; exit }'); \
+	if [ -z "$$AUTH_TOKEN" ]; then \
+		echo "❌ Failed to extract auth token from Boundary authenticate output"; \
+		exit 1; \
+	fi; \
+	export AUTH_TOKEN; \
+	echo ""; \
+	echo "✅ Successfully authenticated with Boundary"; \
+	echo ""; \
+	echo "Creating controller-led worker..."; \
+	TOKEN_OUT=$$(boundary workers create controller-led --token env://AUTH_TOKEN 2>&1); \
+	STATUS=$$?; \
+	if [ $$STATUS -ne 0 ]; then \
+		echo "❌ Failed to create controller-led worker"; \
+		printf '%s\n' "$$TOKEN_OUT"; \
 		exit $$STATUS; \
 	fi; \
 	ACTIVATION_TOKEN=$$(printf '%s\n' "$$TOKEN_OUT" | awk -F': *' '/Controller-Generated Activation Token:/ { if ($$2 != "") { print $$2; exit } if (getline > 0) { gsub(/^[[:space:]]+|[[:space:]]+$$/, "", $$0); print $$0; exit } }'); \
+	WORKER_ID=$$(printf '%s\n' "$$TOKEN_OUT" | awk -F': *' '/^  ID:/ { print $$2; exit }'); \
 	if [ -z "$$ACTIVATION_TOKEN" ]; then \
 		echo "❌ Failed to extract controller-generated activation token"; \
 		exit 1; \
 	fi; \
 	export ACTIVATION_TOKEN; \
+	if [ -n "$$WORKER_ID" ]; then \
+		echo "✅ Created worker $$WORKER_ID"; \
+	fi; \
 	echo ""; \
 	echo "Generating worker.hcl from template..."; \
 	sed -e "s|<activation-token>|$$ACTIVATION_TOKEN|g" -e "s|<cluster-id>|$$BOUNDARY_CLUSTER_ID|g" scripts/worker-template.hcl > worker.hcl; \
