@@ -256,16 +256,16 @@ acceptance-setup:
 	@if ! command -v boundary >/dev/null 2>&1; then \
 		echo "⚠️  boundary CLI is not installed"; \
 		echo "Installing boundary CLI..."; \
-		if [ "$$(uname)" = "Darwin" ]; then \
+		ENV=$$(uname); \
+		if [ "$$ENV" = "Darwin" ]; then \
 			brew tap hashicorp/tap && brew install hashicorp/tap/boundary; \
+		elif [ "$$ENV" = "Linux" ]; then \
+			echo "Installing boundary CLI from HashiCorp APT repository..."; \
+			wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
+			echo "deb [arch=$$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $$(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list; \
+			sudo apt update && sudo apt install -y boundary; \
 		else \
-			echo "Please install boundary CLI manually from:"; \
-			echo "  https://developer.hashicorp.com/boundary/install"; \
-			echo ""; \
-			echo "For Linux:"; \
-			echo "  wget https://releases.hashicorp.com/boundary/0.15.0/boundary_0.15.0_linux_amd64.zip"; \
-			echo "  unzip boundary_0.15.0_linux_amd64.zip"; \
-			echo "  sudo mv boundary /usr/local/bin/"; \
+			echo "❌ Failed to install Boundary"; \
 			exit 1; \
 		fi; \
 	fi
