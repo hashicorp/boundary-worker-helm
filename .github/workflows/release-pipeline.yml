@@ -2,7 +2,7 @@ name: Release Pipeline
 
 on:
   push:
-    branches: [yash/actions]
+    branches: [worker-helm-v0, yash/actions]
 
 jobs:
   lint:
@@ -66,20 +66,21 @@ jobs:
     name: Acceptance Test
     runs-on: ubuntu-latest
     needs: unit-test
+    env:
+      BOUNDARY_ADDR: ${{ secrets.BOUNDARY_ADDR }}
+      BOUNDARY_AUTH_METHOD_ID: ${{ secrets.BOUNDARY_AUTH_METHOD_ID }}
+      BOUNDARY_CLUSTER_ID: ${{ secrets.BOUNDARY_CLUSTER_ID }}
+      BOUNDARY_LOGIN_NAME: ${{ secrets.BOUNDARY_LOGIN_NAME }}
+      BOUNDARY_PASSWORD: ${{ secrets.BOUNDARY_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup KIND
-        uses: helm/kind-action@v1
-        with:
-          cluster_name: acceptance
-          config: tests/acceptance/kind-acceptance-config.yaml
+      - name: Setup acceptance environment
+        run: make acceptance-setup
 
-      - name: Verify cluster
-        run: |
-          kubectl cluster-info --context kind-acceptance
-          kubectl get nodes --context kind-acceptance
+      - name: Generate worker config
+        run: make worker-config
 
       - name: Install Helm chart and run Helm tests
         run: make acceptance-helm

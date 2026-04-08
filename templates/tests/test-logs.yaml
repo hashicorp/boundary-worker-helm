@@ -72,10 +72,16 @@ spec:
         echo "✅ Logs contain structured log levels"
         
         # Count log levels
-        INFO_COUNT=$(echo "$FULL_LOGS" | grep -ci "info" || echo "0")
-        WARN_COUNT=$(echo "$FULL_LOGS" | grep -ci "warn" || echo "0")
-        ERROR_COUNT=$(echo "$FULL_LOGS" | grep -ci "error" || echo "0")
-        DEBUG_COUNT=$(echo "$FULL_LOGS" | grep -ci "debug" || echo "0")
+        INFO_COUNT=$(echo "$FULL_LOGS" | grep -ci "info" 2>/dev/null || true)
+        WARN_COUNT=$(echo "$FULL_LOGS" | grep -ci "warn" 2>/dev/null || true)
+        ERROR_COUNT=$(echo "$FULL_LOGS" | grep -ci "error" 2>/dev/null || true)
+        DEBUG_COUNT=$(echo "$FULL_LOGS" | grep -ci "debug" 2>/dev/null || true)
+        
+        # Set to 0 if empty
+        INFO_COUNT=${INFO_COUNT:-0}
+        WARN_COUNT=${WARN_COUNT:-0}
+        ERROR_COUNT=${ERROR_COUNT:-0}
+        DEBUG_COUNT=${DEBUG_COUNT:-0}
         
         echo "Log level distribution:"
         echo "  INFO:  $INFO_COUNT"
@@ -88,8 +94,9 @@ spec:
       
       echo ""
       echo "Validating no excessive error messages..."
-      ERROR_COUNT=$(echo "$FULL_LOGS" | grep -ci "error" || echo "0")
-      TOTAL_LINES=$(echo "$FULL_LOGS" | wc -l)
+      ERROR_COUNT=$(echo "$FULL_LOGS" | grep -ci "error" 2>/dev/null || true)
+      ERROR_COUNT=${ERROR_COUNT:-0}
+      TOTAL_LINES=$(echo "$FULL_LOGS" | wc -l | tr -d ' ')
       
       if [ "$TOTAL_LINES" -gt 0 ]; then
         ERROR_RATIO=$((ERROR_COUNT * 100 / TOTAL_LINES))
@@ -137,7 +144,7 @@ spec:
       
       echo ""
       echo "Checking for critical errors in logs..."
-      CRITICAL=$(echo "$FULL_LOGS" | grep -i "panic\|fatal\|critical" | grep -v "test" || echo "")
+      CRITICAL=$(echo "$FULL_LOGS" | grep -i "panic\|fatal\|critical" 2>/dev/null | grep -v "test" 2>/dev/null || echo "")
       
       if [ -n "$CRITICAL" ]; then
         echo "⚠️  WARNING: Critical errors found:"
