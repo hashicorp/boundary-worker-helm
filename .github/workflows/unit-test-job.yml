@@ -24,6 +24,12 @@ jobs:
       - name: Set up Helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Setup helm-unittest plugin
+        run: make setup-helm-unittest
+
+      - name: Run Unit Tests
+        run: make unit-test
+
 
       - name: Helm Template (Dry Run)
         run: |
