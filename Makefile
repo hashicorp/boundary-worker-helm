@@ -470,3 +470,4 @@ acceptance-cleanup:
 	fi
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
+	
