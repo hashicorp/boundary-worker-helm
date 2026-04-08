@@ -1,0 +1,188 @@
+suite: Test Helper Templates
+templates:
+  - worker-deployment.yaml
+  - worker-service.yaml
+  - worker-configmap.yaml
+  - worker-pvc.yaml
+tests:
+  # Test deployment uses correct labels from helpers
+  - it: should have correct labels on deployment
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    asserts:
+      - isNotEmpty:
+          path: metadata.labels
+      - isNotEmpty:
+          path: metadata.labels["app.kubernetes.io/name"]
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: test-release
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: worker
+      - isNotEmpty:
+          path: metadata.labels["helm.sh/chart"]
+
+  # Test deployment name follows naming convention
+  - it: should generate correct deployment name
+    template: worker-deployment.yaml
+    release:
+      name: my-release
+    asserts:
+      - equal:
+          path: metadata.name
+          value: my-release-deployment
+
+  # Test deployment name is DNS compliant
+  - it: should have DNS-compliant deployment name
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+
+  # Test selector labels
+  - it: should have correct selector labels
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: boundary-worker
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/instance"]
+          value: test-release
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: worker
+
+  # Test proxy service name
+  - it: should generate correct proxy service name
+    template: worker-service.yaml
+    release:
+      name: test-release
+    set:
+      worker.service.proxy.enabled: true
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: test-release-proxy
+
+  # Test ops service name
+  - it: should generate correct ops service name
+    template: worker-service.yaml
+    release:
+      name: test-release
+    set:
+      worker.service.ops.enabled: true
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.name
+          value: test-release-ops
+
+  # Test configmap name
+  - it: should generate correct configmap name
+    template: worker-configmap.yaml
+    release:
+      name: test-release
+    asserts:
+      - equal:
+          path: metadata.name
+          value: test-release-config
+
+  # Test PVC names
+  - it: should generate correct recording PVC name
+    template: worker-pvc.yaml
+    release:
+      name: test-release
+    set:
+      worker.persistence.recording.enabled: true
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: test-release-recording-storage
+
+  - it: should generate correct auth storage PVC name
+    template: worker-pvc.yaml
+    release:
+      name: test-release
+    set:
+      worker.persistence.authStorage.enabled: true
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.name
+          value: test-release-auth-storage
+
+  # Test with custom fullnameOverride
+  - it: should use fullnameOverride for deployment name
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    set:
+      fullnameOverride: custom-name
+    asserts:
+      - equal:
+          path: metadata.name
+          value: custom-name-deployment
+
+  # Test chart label format
+  - it: should have correct chart label format
+    template: worker-deployment.yaml
+    chart:
+      name: boundary-worker
+      version: 0.1.0
+    asserts:
+      - equal:
+          path: metadata.labels["helm.sh/chart"]
+          value: boundary-worker-0.1.0
+
+  # Test managed-by label
+  - it: should have Helm as managed-by label
+    template: worker-deployment.yaml
+    release:
+      service: Helm
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+
+  # Test name truncation (max 63 chars for DNS)
+  - it: should truncate long names to 63 characters
+    template: worker-deployment.yaml
+    release:
+      name: very-long-release-name-that-might-exceed-limits
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+
+  # Test all resources have consistent labels
+  - it: should have consistent labels across resources
+    templates:
+      - worker-deployment.yaml
+      - worker-configmap.yaml
+    release:
+      name: test-release
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: test-release
+
+  # Test security context from helpers
+  - it: should have security context set
+    template: worker-deployment.yaml
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.securityContext
+      - isNotNull:
+          path: spec.template.spec.containers[0].securityContext
+
+# Made with Bob
