@@ -1,9 +1,9 @@
 # ================================
 # PHONY Declarations
 # ================================
-.PHONY: help format deps clean lint worker-config
-.PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape lint-helm-k8s trivy-scan kubescape-scan
-.PHONY: acceptance-setup acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: help format deps clean lint test unit-test worker-config
+.PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
+.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
 
 # ================================
 # Help Target
@@ -13,14 +13,17 @@ help:
 	@echo "Boundary Worker Helm Chart - Lint Targets"
 	@echo "================================"
 	@echo "Available targets:"
-	@echo "  make format                 - Format all YAML files with Prettier"
-	@echo "  make deps                   - Install required tools (macOS)"
-	@echo "  make lint                   - Run all lints and scans locally (deps + lint + scans)"
-	@echo "  make clean                  - Clean generated files"
+	@echo "  make format            - Format all YAML files with Prettier"
+	@echo "  make deps              - Install required tools (macOS)"
+	@echo "  make lint              - Run all lints and scans locally (deps + lint + scans)"
+	@echo "  make test              - Run unit tests (alias for unit-test)"
+	@echo "  make unit-test         - Run Helm unit tests with helm-unittest"
+	@echo "  make clean             - Clean generated files"
 	@echo "  make worker-config          - Authenticate, create a worker, and generate worker.hcl"
 	@echo ""
 	@echo "CI/CD targets:"
 	@echo "  make setup-helm         - Install Helm for CI"
+	@echo "  make setup-helm-unittest - Install helm-unittest plugin for CI"
 	@echo "  make setup-kubeconform  - Install Kubeconform for CI"
 	@echo "  make setup-trivy        - Install Trivy for CI"
 	@echo "  make setup-kubescape    - Install Kubescape for CI"
@@ -48,6 +51,7 @@ deps:
 	@command -v trivy >/dev/null 2>&1 || brew install trivy
 	@command -v kubescape >/dev/null 2>&1 || brew install kubescape
 	@command -v prettier >/dev/null 2>&1 || npm install -g prettier
+	@helm plugin list | grep -q unittest || helm plugin install https://github.com/helm-unittest/helm-unittest.git
 	@echo "✅ All tools installed"
 
 format:
@@ -88,8 +92,32 @@ lint: deps
 	@echo "================================"
 
 # ================================
+# Unit Testing Targets
+# ================================
+
+test: unit-test
+
+unit-test:
+	@echo "================================"
+	@echo "Running Helm Unit Tests"
+	@echo "================================"
+	@if ! helm plugin list | grep -q unittest; then \
+		echo "❌ helm-unittest plugin not found. Installing..."; \
+		helm plugin install https://github.com/helm-unittest/helm-unittest.git; \
+	fi
+	@echo "Running unit tests..."
+	@helm unittest . -f 'tests/unit/*_test.yaml'
+	@echo "✅ Unit tests passed!"
+
+# ================================
 # CI/CD Setup Targets
 # ================================
+
+setup-helm-unittest:
+	@echo "Installing helm-unittest plugin..."
+	@helm plugin install https://github.com/helm-unittest/helm-unittest.git || true
+	@helm plugin list | grep unittest
+	@echo "✅ helm-unittest plugin installed"
 
 setup-helm:
 	@echo "Installing Helm..."
