@@ -185,4 +185,3 @@ tests:
       - isNotNull:
           path: spec.template.spec.containers[0].securityContext
 
-# Made with Bob
