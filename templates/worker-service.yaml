@@ -8,9 +8,9 @@ metadata:
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
-  {{- with .Values.worker.service.proxy.annotations }}
+  {{- with (include "boundary.worker.proxy.annotations" .) }}
   annotations:
-    {{- toYaml . | nindent 4 }}
+    {{- . | nindent 4 }}
   {{- end }}
 spec:
   type: {{ .Values.worker.service.proxy.type }}
@@ -45,6 +45,6 @@ spec:
       targetPort: {{ .Values.worker.service.ops.targetPort }}
       protocol: TCP
       name: ops
-{{- end }}
   selector:
     {{- include "boundary.worker.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -89,14 +89,9 @@ spec:
             name: {{ include "boundary.worker.configmapName" . }}
         - name: tmp
           emptyDir: {}
-        {{- if .Values.worker.persistence.authStorage.enabled }}
         - name: auth-storage
           persistentVolumeClaim:
             claimName: {{ include "boundary.worker.authStoragePvcName" . }}
-        {{- else }}
-        - name: auth-storage
-          emptyDir: {}
-        {{- end }}
         {{- if .Values.worker.persistence.recording.enabled }}
         - name: recording-storage
           persistentVolumeClaim:

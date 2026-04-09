@@ -100,6 +100,22 @@ spec:
       echo "Checking target port configuration..."
       TARGET_PORT=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].targetPort}')
       echo "✅ Target port is set to: $TARGET_PORT"
+
+      echo "Checking load balancer annotations match service type..."
+      LB_SCHEME=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.service\.beta\.kubernetes\.io/aws-load-balancer-scheme}')
+      if [ "$EXPECTED_TYPE" = "LoadBalancer" ]; then
+        if [ "$LB_SCHEME" != "internet-facing" ]; then
+          echo "❌ FAILED: LoadBalancer service is missing the internet-facing annotation"
+          exit 1
+        fi
+        echo "✅ LoadBalancer annotations are present"
+      else
+        if [ -n "$LB_SCHEME" ]; then
+          echo "❌ FAILED: Non-LoadBalancer service should not include load balancer annotations"
+          exit 1
+        fi
+        echo "✅ LoadBalancer annotations are omitted for private service types"
+      fi
       
       echo ""
       echo "=========================================="
@@ -110,6 +126,7 @@ spec:
       echo "Port: $SERVICE_PORT"
       echo "Target Port: $TARGET_PORT"
       echo "Endpoints: $ENDPOINTS"
+      echo "LB Scheme Annotation: ${LB_SCHEME:-<none>}"
       {{- if eq .Values.worker.service.proxy.type "LoadBalancer" }}
       echo ""
       echo "LoadBalancer Status:"
