@@ -301,13 +301,10 @@ tests:
       worker.service.ops.enabled: false
     asserts:
       - hasDocuments:
-          count: 2
+          count: 1
       - isKind:
           of: Service
         documentIndex: 0
-      - isNull:
-          path: kind
-        documentIndex: 1
 
   - it: should have correct ops service selector labels
     template: worker-service.yaml
@@ -378,10 +375,16 @@ tests:
     template: worker-pvc.yaml
     set:
       worker.persistence.recording.enabled: false
-      worker.persistence.authStorage.enabled: true
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
+      - isKind:
+          of: PersistentVolumeClaim
+        documentIndex: 0
+      - equal:
+          path: metadata.labels["storage-type"]
+          value: auth
+        documentIndex: 0
 
   - it: should not mount recording volume when persistence disabled
     template: worker-deployment.yaml
@@ -448,14 +451,17 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[2].mountPath
           value: /custom/auth
 
-  - it: should use emptyDir for auth storage when persistence disabled
+  - it: should always use PVC for auth storage
     template: worker-deployment.yaml
-    set:
-      worker.persistence.authStorage.enabled: false
     asserts:
       - equal:
-          path: spec.template.spec.volumes[2].emptyDir
-          value: {}
+          path: spec.template.spec.volumes[2].name
+          value: auth-storage
+      - isNotNull:
+          path: spec.template.spec.volumes[2].persistentVolumeClaim
+      - equal:
+          path: spec.template.spec.volumes[2].persistentVolumeClaim.claimName
+          value: RELEASE-NAME-auth-storage
 
   - it: should have storage-type label on auth PVC
     template: worker-pvc.yaml
@@ -1093,19 +1099,22 @@ tests:
       worker.service.ops.enabled: false
     asserts:
       - hasDocuments:
-          count: 1
-      - isNull:
-          path: kind
-        documentIndex: 0
+          count: 0
 
-  - it: should handle both PVCs disabled
+  - it: should create auth PVC even when recording disabled
     template: worker-pvc.yaml
     set:
       worker.persistence.recording.enabled: false
-      worker.persistence.authStorage.enabled: false
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
+      - isKind:
+          of: PersistentVolumeClaim
+        documentIndex: 0
+      - equal:
+          path: metadata.labels["storage-type"]
+          value: auth
+        documentIndex: 0
 
   - it: should handle namespace override
     template: worker-deployment.yaml
