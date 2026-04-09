@@ -2,3 +2,8 @@
 .idea/
 *.tgz
 example-config/*
+rendered.yaml
+yamllint-output.txt
+trivy-output.txt
+kubescape-output.json
+worker.hcl
