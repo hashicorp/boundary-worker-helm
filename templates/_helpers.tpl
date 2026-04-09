@@ -61,6 +61,21 @@ Get the worker proxy service name
 {{- end }}
 
 {{/*
+Get proxy service annotations appropriate for the configured service type
+*/}}
+{{- define "boundary.worker.proxy.annotations" -}}
+{{- $annotations := .Values.worker.service.proxy.annotations | default dict -}}
+{{- if eq .Values.worker.service.proxy.type "LoadBalancer" -}}
+{{- toYaml $annotations -}}
+{{- else -}}
+{{- $filtered := omit $annotations "service.beta.kubernetes.io/aws-load-balancer-type" "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" "service.beta.kubernetes.io/aws-load-balancer-backend-protocol" "service.beta.kubernetes.io/aws-load-balancer-scheme" -}}
+{{- if $filtered -}}
+{{- toYaml $filtered -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Get the worker ops service name
 */}}
 {{- define "boundary.worker.ops.serviceName" -}}
