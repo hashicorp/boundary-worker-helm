@@ -2,7 +2,7 @@ name: Release Pipeline
 
 on:
   push:
-    branches: [worker-helm-v0, yash/actions]
+    branches: [worker-helm-v0, yash/actions, ICU-18794]
 
 jobs:
   lint:
@@ -94,8 +94,52 @@ jobs:
 
   unit-test:
     name: Unit Test
+    runs-on: ubuntu-latest
     needs: [lint, security]
-    uses: ./.github/workflows/unit-test-job.yml
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Print test job info
+        run: |
+          echo "================================"
+          echo "Running Unit Tests"
+          echo "================================"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "================================"
+
+      - name: Setup Helm
+        run: make setup-helm
+
+      - name: Setup helm-unittest plugin
+        run: make setup-helm-unittest
+
+      - name: Run Unit Tests
+        run: make unit-test
+
+      - name: Helm Template (Dry Run)
+        run: |
+          echo "Running Helm template to validate chart rendering..."
+          helm template boundary-worker . --debug
+          echo ""
+          echo "Helm template validation passed!"
+
+      - name: Test with different values
+        run: |
+          echo "Testing chart with custom values..."
+          helm template boundary-worker . \
+            --set image.tag=0.22-ent \
+            --set worker.resources.limits.cpu=500m \
+            --set worker.resources.limits.memory=2Gi
+          echo ""
+          echo "Custom values test passed!"
+
+      - name: Test Summary
+        run: |
+          echo "================================"
+          echo "✅ All tests completed successfully!"
+          echo "================================"
 
 
 
