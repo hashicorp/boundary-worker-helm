@@ -2,7 +2,7 @@ name: Release Pipeline
 
 on:
   push:
-    branches: [worker-helm-v0, yash/actions, ICU-18794]
+    branches: [worker-helm-v0, yash/actions, ICU-18846]
 
 jobs:
   lint:
