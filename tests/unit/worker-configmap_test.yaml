@@ -1,0 +1,135 @@
+suite: Test Worker ConfigMap Configuration
+templates:
+  - worker-configmap.yaml
+tests:
+  # ============================================================================
+  # CONFIGMAP CONTENT TESTS
+  # ============================================================================
+  
+  - it: should create configmap with worker configuration
+    set:
+      worker.config: |
+        listener "tcp" {
+          address = "0.0.0.0:9202"
+          purpose = "proxy"
+        }
+        
+        worker {
+          name = "${POD_NAME_LOWER}"
+          description = "Boundary worker"
+        }
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - isNotEmpty:
+          path: data["boundary-worker.hcl"]
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "listener \"tcp\""
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "worker \\{"
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "\\$\\{POD_NAME_LOWER\\}"
+
+  - it: should handle empty worker config
+    set:
+      worker.config: ""
+    asserts:
+      - isNotNull:
+          path: data["boundary-worker.hcl"]
+
+  # ============================================================================
+  # METADATA TESTS
+  # ============================================================================
+  
+  - it: should configure configmap metadata correctly
+    release:
+      name: test-release
+      namespace: test-namespace
+    asserts:
+      - equal:
+          path: metadata.name
+          value: test-release-config
+      - equal:
+          path: metadata.namespace
+          value: test-namespace
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: boundary-worker
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: test-release
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: worker
+
+  # ============================================================================
+  # COMPLEX CONFIGURATION TEST
+  # ============================================================================
+  
+  - it: should support complex HCL configuration
+    release:
+      name: production-worker
+      namespace: boundary-system
+    set:
+      worker.config: |
+        # Boundary Worker Configuration
+        disable_mlock = true
+        
+        listener "tcp" {
+          address = "0.0.0.0:9202"
+          purpose = "proxy"
+          tls_disable = true
+        }
+        
+        listener "tcp" {
+          address = "0.0.0.0:9203"
+          purpose = "ops"
+          tls_disable = true
+        }
+        
+        worker {
+          name = "${POD_NAME_LOWER}"
+          description = "Production Boundary worker"
+          
+          initial_upstreams = [
+            "boundary-controller:9201"
+          ]
+          
+          tags {
+            type = ["worker", "kubernetes"]
+            region = ["us-west-2"]
+          }
+        }
+        
+        kms "aead" {
+          purpose = "worker-auth"
+          aead_type = "aes-gcm"
+          key = "8fZBjCUfN0TzjEGLQldGY4+iE9AkOvCfjh7+p0GtRBQ="
+          key_id = "global_worker-auth"
+        }
+    asserts:
+      - equal:
+          path: metadata.name
+          value: production-worker-config
+      - equal:
+          path: metadata.namespace
+          value: boundary-system
+      - isNotEmpty:
+          path: data["boundary-worker.hcl"]
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "# Boundary Worker Configuration"
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "disable_mlock = true"
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "kms \"aead\""
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "initial_upstreams"
+
+# Made with Bob

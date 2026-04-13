@@ -1,0 +1,392 @@
+suite: Test Worker Deployment Configuration
+templates:
+  - worker-deployment.yaml
+  - worker-configmap.yaml
+  - worker-pvc.yaml
+tests:
+  # ============================================================================
+  # IMAGE CONFIGURATION TESTS
+  # ============================================================================
+  
+  - it: should configure image settings correctly
+    template: worker-deployment.yaml
+    set:
+      image.repository: custom/boundary
+      image.tag: "1.0.0"
+      image.pullPolicy: Always
+      imagePullSecrets:
+        - name: secret-one
+        - name: secret-two
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "^custom/boundary:1\\.0\\.0$"
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+      - equal:
+          path: spec.template.spec.imagePullSecrets[0].name
+          value: secret-one
+      - equal:
+          path: spec.template.spec.imagePullSecrets[1].name
+          value: secret-two
+
+  # ============================================================================
+  # WORKER CONFIGURATION TESTS
+  # ============================================================================
+  
+  - it: should configure terminationGracePeriodSeconds
+    template: worker-deployment.yaml
+    set:
+      worker.terminationGracePeriodSeconds: 3600
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 3600
+
+  - it: should use default terminationGracePeriodSeconds when not set
+    template: worker-deployment.yaml
+    set:
+      worker.terminationGracePeriodSeconds: null
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 7200
+
+  # ============================================================================
+  # RESOURCE CONFIGURATION TESTS
+  # ============================================================================
+  
+  - it: should configure resource limits and requests
+    template: worker-deployment.yaml
+    set:
+      worker.resources.limits.cpu: 1000m
+      worker.resources.limits.memory: 4Gi
+      worker.resources.requests.cpu: 500m
+      worker.resources.requests.memory: 2Gi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: 1000m
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 4Gi
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: 500m
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 2Gi
+
+  # ============================================================================
+  # PERSISTENCE CONFIGURATION TESTS
+  # ============================================================================
+  
+  - it: should configure volume mounts with custom paths
+    template: worker-deployment.yaml
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.recording.path: /custom/recording
+      worker.persistence.authStorage.path: /custom/auth
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[2].mountPath
+          value: /custom/auth
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[3].mountPath
+          value: /custom/recording
+
+  - it: should not mount recording volume when disabled
+    template: worker-deployment.yaml
+    set:
+      worker.persistence.recording.enabled: false
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].volumeMounts[3]
+
+  # ============================================================================
+  # SECURITY CONTEXT TESTS
+  # ============================================================================
+  
+  - it: should configure pod security context
+    template: worker-deployment.yaml
+    set:
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 2000
+        fsGroup: 3000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 1001
+      - equal:
+          path: spec.template.spec.securityContext.runAsGroup
+          value: 2000
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 3000
+      - equal:
+          path: spec.template.spec.securityContext.fsGroupChangePolicy
+          value: OnRootMismatch
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: should configure container security context
+    template: worker-deployment.yaml
+    set:
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 2000
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 1001
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop[0]
+          value: ALL
+
+  # ============================================================================
+  # POD ANNOTATIONS TESTS
+  # ============================================================================
+  
+  - it: should include custom and checksum annotations
+    template: worker-deployment.yaml
+    set:
+      podAnnotations:
+        custom.annotation: "test-value"
+        another.annotation: "another-value"
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["custom.annotation"]
+          value: "test-value"
+      - equal:
+          path: spec.template.metadata.annotations["another.annotation"]
+          value: "another-value"
+      - isNotEmpty:
+          path: spec.template.metadata.annotations["checksum/config"]
+      - isNotEmpty:
+          path: spec.template.metadata.annotations["checksum/values"]
+
+  # ============================================================================
+  # SCHEDULING TESTS
+  # ============================================================================
+  
+  - it: should configure node selector
+    template: worker-deployment.yaml
+    set:
+      nodeSelector:
+        disktype: ssd
+        environment: production
+        region: us-west
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector.disktype
+          value: ssd
+      - equal:
+          path: spec.template.spec.nodeSelector.environment
+          value: production
+      - equal:
+          path: spec.template.spec.nodeSelector.region
+          value: us-west
+
+  - it: should configure tolerations
+    template: worker-deployment.yaml
+    set:
+      tolerations:
+        - key: "key1"
+          operator: "Equal"
+          value: "value1"
+          effect: "NoSchedule"
+        - key: "key2"
+          operator: "Exists"
+          effect: "NoExecute"
+    asserts:
+      - equal:
+          path: spec.template.spec.tolerations[0].key
+          value: key1
+      - equal:
+          path: spec.template.spec.tolerations[0].operator
+          value: Equal
+      - equal:
+          path: spec.template.spec.tolerations[1].key
+          value: key2
+
+  - it: should configure pod affinity
+    template: worker-deployment.yaml
+    set:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - boundary
+              topologyKey: kubernetes.io/hostname
+    asserts:
+      - isNotEmpty:
+          path: spec.template.spec.affinity.podAffinity
+      - equal:
+          path: spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
+          value: kubernetes.io/hostname
+
+  # ============================================================================
+  # CONTAINER CONFIGURATION TESTS
+  # ============================================================================
+  
+  - it: should configure container ports
+    template: worker-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].name
+          value: proxy
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 9202
+      - equal:
+          path: spec.template.spec.containers[0].ports[1].name
+          value: ops
+      - equal:
+          path: spec.template.spec.containers[0].ports[1].containerPort
+          value: 9203
+
+  - it: should configure health probes
+    template: worker-deployment.yaml
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.containers[0].livenessProbe
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.tcpSocket.port
+          value: proxy
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
+          value: 60
+      - isNotNull:
+          path: spec.template.spec.containers[0].readinessProbe
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.tcpSocket.port
+          value: proxy
+
+  - it: should configure environment variables
+    template: worker-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: POD_NAME
+      - equal:
+          path: spec.template.spec.containers[0].env[0].valueFrom.fieldRef.fieldPath
+          value: metadata.name
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: SKIP_SETCAP
+      - equal:
+          path: spec.template.spec.containers[0].env[1].value
+          value: "1"
+
+  # ============================================================================
+  # VOLUME TESTS
+  # ============================================================================
+  
+  - it: should configure volumes correctly
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    set:
+      worker.persistence.recording.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].name
+          value: config
+      - equal:
+          path: spec.template.spec.volumes[0].configMap.name
+          value: test-release-config
+      - equal:
+          path: spec.template.spec.volumes[1].name
+          value: tmp
+      - equal:
+          path: spec.template.spec.volumes[2].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.volumes[3].name
+          value: recording-storage
+
+  - it: should configure volume mounts correctly
+    template: worker-deployment.yaml
+    set:
+      worker.persistence.recording.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].name
+          value: config
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /etc/boundary
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].readOnly
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1].name
+          value: tmp
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[2].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[3].name
+          value: recording-storage
+
+  # ============================================================================
+  # DEPLOYMENT SPEC TESTS
+  # ============================================================================
+  
+  - it: should configure deployment specifications
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+      namespace: custom-namespace
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+      - equal:
+          path: metadata.namespace
+          value: custom-namespace
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: boundary-worker
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/instance"]
+          value: test-release
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: worker
+
+# Made with Bob

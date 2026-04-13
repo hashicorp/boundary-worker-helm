@@ -1,0 +1,156 @@
+suite: Test Worker Service Configuration
+templates:
+  - worker-service.yaml
+tests:
+  # ============================================================================
+  # PROXY SERVICE TESTS
+  # ============================================================================
+  
+  - it: should configure proxy service with all options
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.proxy.type: LoadBalancer
+      worker.service.proxy.port: 8080
+      worker.service.proxy.targetPort: 8080
+      worker.service.proxy.annotations:
+        custom.annotation: "value"
+        another.annotation: "test"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.type
+          value: LoadBalancer
+      - equal:
+          path: spec.ports[0].port
+          value: 8080
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 8080
+      - equal:
+          path: spec.ports[0].name
+          value: proxy
+      - equal:
+          path: metadata.annotations["custom.annotation"]
+          value: "value"
+      - equal:
+          path: metadata.annotations["another.annotation"]
+          value: "test"
+
+  - it: should configure proxy service selector labels
+    release:
+      name: test-release
+    set:
+      worker.service.proxy.enabled: true
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/name"]
+          value: boundary-worker
+      - equal:
+          path: spec.selector["app.kubernetes.io/instance"]
+          value: test-release
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: worker
+
+  # ============================================================================
+  # OPS SERVICE TESTS
+  # ============================================================================
+  
+  - it: should configure ops service with all options
+    set:
+      worker.service.ops.enabled: true
+      worker.service.ops.type: ClusterIP
+      worker.service.ops.port: 8081
+      worker.service.ops.targetPort: 8081
+      worker.service.ops.annotations:
+        prometheus.io/scrape: "true"
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - equal:
+          path: spec.ports[0].port
+          value: 8081
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 8081
+      - equal:
+          path: spec.ports[0].name
+          value: ops
+      - equal:
+          path: metadata.annotations["prometheus.io/scrape"]
+          value: "true"
+
+  - it: should configure ops service selector labels
+    release:
+      name: test-release
+    set:
+      worker.service.ops.enabled: true
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/name"]
+          value: boundary-worker
+      - equal:
+          path: spec.selector["app.kubernetes.io/instance"]
+          value: test-release
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: worker
+
+  # ============================================================================
+  # CONDITIONAL RENDERING TESTS
+  # ============================================================================
+  
+  - it: should not create services when both disabled
+    set:
+      worker.service.proxy.enabled: false
+      worker.service.ops.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should create only proxy service when ops disabled
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.ops.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Service
+        documentIndex: 0
+
+  - it: should create both services when enabled
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.ops.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: Service
+        documentIndex: 0
+      - isKind:
+          of: Service
+        documentIndex: 1
+
+  - it: should handle namespace override for both services
+    release:
+      namespace: custom-namespace
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.ops.enabled: true
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: custom-namespace
+        documentIndex: 0
+      - equal:
+          path: metadata.namespace
+          value: custom-namespace
+        documentIndex: 1
+
+# Made with Bob
