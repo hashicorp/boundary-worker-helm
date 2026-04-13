@@ -44,7 +44,7 @@ tests:
           path: spec.template.spec.terminationGracePeriodSeconds
           value: 3600
 
-  - it: should use default terminationGracePeriodSeconds when not set
+  - it: should use fallback terminationGracePeriodSeconds when value is null
     template: worker-deployment.yaml
     set:
       worker.terminationGracePeriodSeconds: null
@@ -52,6 +52,13 @@ tests:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
           value: 7200
+
+  - it: should use chart default terminationGracePeriodSeconds when not overridden
+    template: worker-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 90
 
   # ============================================================================
   # RESOURCE CONFIGURATION TESTS
@@ -255,6 +262,34 @@ tests:
       - equal:
           path: spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
           value: kubernetes.io/hostname
+
+  # ============================================================================
+  # NEGATIVE TESTS FOR OPTIONAL DEPLOYMENT SECTIONS
+  # ============================================================================
+  
+  - it: should not include imagePullSecrets by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.imagePullSecrets
+
+  - it: should not include nodeSelector by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.nodeSelector
+
+  - it: should not include affinity by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.affinity
+
+  - it: should not include tolerations by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.tolerations
 
   # ============================================================================
   # CONTAINER CONFIGURATION TESTS

@@ -53,6 +53,33 @@ tests:
           path: spec.selector["app.kubernetes.io/component"]
           value: worker
 
+  - it: should filter AWS annotations for non-LoadBalancer proxy service types
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.proxy.type: ClusterIP
+      worker.service.proxy.annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+        service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+        custom.annotation: "should-remain"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - isNull:
+          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-type"]
+      - isNull:
+          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled"]
+      - isNull:
+          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-backend-protocol"]
+      - isNull:
+          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-scheme"]
+      - equal:
+          path: metadata.annotations["custom.annotation"]
+          value: "should-remain"
+
   # ============================================================================
   # OPS SERVICE TESTS
   # ============================================================================
