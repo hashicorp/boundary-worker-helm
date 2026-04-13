@@ -171,5 +171,3 @@ tests:
           path: spec.storageClassName
           value: local-path
         documentIndex: 0
-
-# Made with Bob

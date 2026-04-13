@@ -152,5 +152,3 @@ tests:
           path: metadata.namespace
           value: custom-namespace
         documentIndex: 1
-
-# Made with Bob

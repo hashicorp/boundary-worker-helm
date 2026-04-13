@@ -131,5 +131,3 @@ tests:
       - matchRegex:
           path: data["boundary-worker.hcl"]
           pattern: "initial_upstreams"
-
-# Made with Bob
