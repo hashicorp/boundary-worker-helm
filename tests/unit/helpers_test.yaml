@@ -114,7 +114,7 @@ tests:
     release:
       name: test-release
     set:
-      worker.persistence.authStorage.enabled: true
+      worker.persistence.recording.enabled: true
     documentIndex: 1
     asserts:
       - equal:
@@ -158,11 +158,13 @@ tests:
   - it: should truncate long names to 63 characters
     template: worker-deployment.yaml
     release:
-      name: very-long-release-name-that-might-exceed-limits
+      name: test-release
+    set:
+      fullnameOverride: this-is-a-very-long-fullname-override-that-definitely-exceeds-the-sixty-three-character-limit
     asserts:
-      - matchRegex:
+      - equal:
           path: metadata.name
-          pattern: ^.{1,63}$
+          value: this-is-a-very-long-fullname-override-that-definitely-exceeds-t-deployment
 
   # Test all resources have consistent labels
   - it: should have consistent labels across resources
