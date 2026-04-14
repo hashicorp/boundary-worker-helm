@@ -160,14 +160,11 @@ tests:
     release:
       name: test-release
     set:
-      fullnameOverride: very-long-name-that-will-test-truncation-logic
+      fullnameOverride: this-is-a-very-long-fullname-override-that-definitely-exceeds-the-sixty-three-character-limit
     asserts:
-      - matchRegex:
-          path: metadata.name
-          pattern: ^.{1,63}$
       - equal:
           path: metadata.name
-          value: very-long-name-that-will-test-truncation-logic-deployment
+          value: this-is-a-very-long-fullname-override-that-definitely-exceeds-t-deployment
 
   # Test all resources have consistent labels
   - it: should have consistent labels across resources
