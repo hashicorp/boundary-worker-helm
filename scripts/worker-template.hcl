@@ -14,6 +14,7 @@ listener "tcp" {
 worker {
   auth_storage_path = "/var/lib/boundary"
   recording_storage_path = "/boundary/recording"
+  
   tags {
     type = ["worker", "egress", "test"]
   }

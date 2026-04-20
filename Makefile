@@ -3,7 +3,7 @@
 # ================================
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
-.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-kind-test acceptance-full acceptance-cleanup
 
 # ================================
 # Help Target
@@ -32,11 +32,12 @@ help:
 	@echo "  make kubescape-scan     - Run security scan with Kubescape"
 	@echo ""
 	@echo "Acceptance Testing targets:"
-	@echo "  make acceptance-setup   - Install dependencies and setup KIND cluster"
-	@echo "  make acceptance-helm    - Install Helm chart from worker.hcl and run Helm tests"
-	@echo "  make acceptance-test    - Run acceptance tests"
-	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
-	@echo "  make acceptance-cleanup - Delete acceptance cluster"
+	@echo "  make acceptance-setup      - Install dependencies and setup KIND cluster"
+	@echo "  make acceptance-helm       - Install Helm chart from worker.hcl and run Helm tests"
+	@echo "  make acceptance-test       - Run basic acceptance tests"
+	@echo "  make acceptance-kind-test  - Run comprehensive KIND cluster tests (worker registration + session validation)"
+	@echo "  make acceptance-full       - Run full acceptance workflow (setup + worker-config + helm + tests)"
+	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
 	@echo "================================"
 
 # ================================
@@ -461,13 +462,29 @@ acceptance-helm:
 
 acceptance-test:
 	@echo "================================"
-	@echo "Running Acceptance Tests"
+	@echo "Running Basic Acceptance Tests"
 	@echo "================================"
 	@if [ ! -f tests/acceptance/acceptance-test.sh ]; then \
 		echo "❌ Test script not found: tests/acceptance/acceptance-test.sh"; \
 		exit 1; \
 	fi
 	@bash tests/acceptance/acceptance-test.sh
+
+acceptance-kind-test:
+	@echo "================================"
+	@echo "Running KIND Cluster Acceptance Tests"
+	@echo "================================"
+	@echo "This test validates:"
+	@echo "  - Worker deployment in KIND cluster"
+	@echo "  - Worker registration with INT long-lived cluster"
+	@echo "  - Session creation capability"
+	@echo ""
+	@if [ ! -f tests/acceptance/kind-cluster-test.sh ]; then \
+		echo "❌ Test script not found: tests/acceptance/kind-cluster-test.sh"; \
+		exit 1; \
+	fi
+	@chmod +x tests/acceptance/kind-cluster-test.sh
+	@bash tests/acceptance/kind-cluster-test.sh
 
 
 acceptance-full:
@@ -478,6 +495,7 @@ acceptance-full:
 	@$(MAKE) worker-config
 	@$(MAKE) acceptance-helm
 	@$(MAKE) acceptance-test
+	@$(MAKE) acceptance-kind-test
 	@echo ""
 	@echo "================================"
 	@echo "✅ Full Acceptance Test Completed!"

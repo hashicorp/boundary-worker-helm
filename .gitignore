@@ -7,3 +7,9 @@ yamllint-output.txt
 trivy-output.txt
 kubescape-output.json
 worker.hcl
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+.env.example
