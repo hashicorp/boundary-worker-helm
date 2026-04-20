@@ -1,56 +1,54 @@
 # Boundary Worker Helm Chart
 
 This repository contains a Helm chart for deploying a HashiCorp Boundary worker
-on Kubernetes. The chart creates the worker deployment, a configuration
-ConfigMap, optional proxy and ops services, and optional persistent volumes for
-session recordings and worker auth storage.
+on Kubernetes. The chart renders a single worker `Deployment`, a worker
+configuration `ConfigMap`, optional proxy and ops `Service` resources, and
+persistent volumes for Boundary auth storage and optional session recordings.
 
-For general Boundary documentation, see the
+For product documentation, see the
 [Boundary documentation](https://developer.hashicorp.com/boundary/docs).
 
 ## Prerequisites
 
 To use this chart, Helm must already be configured for your Kubernetes cluster.
-Cluster provisioning, ingress, load balancer integration, DNS, and storage class
-configuration are outside the scope of this repository.
+Cluster provisioning, ingress, DNS, load balancer integration, and storage
+class management are outside the scope of this repository.
 
 Recommended prerequisites:
 
 - Helm 3.6+
-- A Kubernetes cluster with a working default or explicitly configured storage
-  class if persistence is enabled
-- Network connectivity from the worker to your Boundary control plane
-- A valid Boundary worker configuration provided through `worker.config`
+- A reachable Boundary control plane
+- A Kubernetes cluster with a valid storage class for auth storage, and for
+  recording storage if recording persistence is enabled
+- A valid Boundary worker configuration supplied through `worker.config`
 
-## What This Chart Deploys
+## What the Chart Deploys
 
 The chart renders the following resources:
 
-- A single `Deployment` for the Boundary worker
-- A `ConfigMap` containing `boundary-worker.hcl`
-- A proxy `Service` on port `9202` when `worker.service.proxy.enabled=true`
-- An ops `Service` on port `9203` when `worker.service.ops.enabled=true`
-- A PVC for session recording storage when
-  `worker.persistence.recording.enabled=true`
-- A PVC for auth storage when `worker.persistence.authStorage.enabled=true`
+- One `Deployment` for the worker
+- One `ConfigMap` that stores `boundary-worker.hcl`
+- One proxy `Service` when `worker.service.proxy.enabled=true`
+- One ops `Service` when `worker.service.ops.enabled=true`
+- One recording PVC when `worker.persistence.recording.enabled=true`
+- One auth storage PVC on every install
 
-The worker pod starts by rendering the supplied HCL config and replacing
-`${POD_NAME_LOWER}` with the current pod name in lowercase before launching
-Boundary.
+At runtime, the container reads the rendered HCL file from the `ConfigMap`,
+replaces `${POD_NAME_LOWER}` with the current pod name in lowercase, and then
+starts `boundary server` with the processed configuration.
 
-## Required Configuration
+## Required Worker Configuration
 
 This chart does not ship with a default worker configuration. You must provide a
-valid Boundary worker HCL configuration using `worker.config`.
+valid Boundary worker HCL configuration with `worker.config`.
 
-At minimum, your config generally needs to define:
+At minimum, your configuration typically needs:
 
-- A worker name or tag strategy
-- Listener configuration for proxy and ops traffic
-- Public addresses reachable by clients and controllers
-- Upstream controller connection details
-- Authentication storage and recording paths that match the chart values if you
-  override them
+- Listener blocks for proxy and ops traffic
+- Worker registration or tag settings
+- Controller connection settings
+- Public addresses reachable by clients and controllers, when required
+- Storage paths that match the chart values if you override them
 
 Example:
 
@@ -63,15 +61,15 @@ listener "tcp" {
 }
 
 listener "tcp" {
-  address = "0.0.0.0:9203"
-  purpose = "ops"
+  address     = "0.0.0.0:9203"
+  purpose     = "ops"
   tls_disable = true
 }
 
 worker {
-  name = "k8s-worker-${POD_NAME_LOWER}"
-  public_addr = "worker.example.com:9202"
-  auth_storage_path = "/var/lib/boundary"
+  name                   = "k8s-worker-${POD_NAME_LOWER}"
+  public_addr            = "worker.example.com:9202"
+  auth_storage_path      = "/var/lib/boundary"
   recording_storage_path = "/boundary/recording"
 
   controller_generated_activation_token = "<activation-token>"
@@ -82,12 +80,13 @@ worker {
 }
 ```
 
-You can place that configuration in a values file or supply it directly with
-`--set-file`.
+You can provide that HCL directly with `--set-file` or template it inside a
+values file. The chart evaluates `worker.config` with Helm `tpl`, so Helm
+template expressions inside the HCL are supported.
 
-## Usage
+## Installation
 
-To install the chart from this repository:
+Install from this repository:
 
 ```console
 $ helm install boundary-worker . \
@@ -96,7 +95,7 @@ $ helm install boundary-worker . \
     --set-file worker.config=./worker.hcl
 ```
 
-To install with a custom values file:
+Install with an additional values file:
 
 ```console
 $ helm install boundary-worker . \
@@ -106,80 +105,136 @@ $ helm install boundary-worker . \
     --set-file worker.config=./worker.hcl
 ```
 
-After installation, if the proxy service is a `LoadBalancer`, wait for the
-external address to be assigned:
+If your proxy service is a `LoadBalancer`, wait for the external address and
+then update the worker `public_addr` if needed:
 
 ```console
 $ kubectl get svc boundary-worker-proxy -n boundary
-```
 
-If your worker `public_addr` depends on that assigned address, update the worker
-configuration and run an upgrade:
-
-```console
 $ helm upgrade boundary-worker . \
     --namespace boundary \
     --reuse-values \
     --set-file worker.config=./worker.hcl
 ```
 
-## Important Values
+## Key Values
 
-The most important chart values are:
+The default values live in `values.yaml`. Review them before deploying,
+especially the image settings, service annotations, storage classes, and
+security context settings.
 
-- `image.repository`: Worker container image repository
-- `image.tag`: Worker image tag. Defaults in this repository to `0.21-ent`
-- `worker.config`: Raw Boundary worker HCL injected into the ConfigMap
-- `worker.terminationGracePeriodSeconds`: Grace period before pod shutdown
-- `worker.service.proxy.*`: Proxy service enablement, type, ports, and
-  annotations
-- `worker.service.ops.*`: Ops service enablement, type, ports, and annotations
-- `worker.resources`: Container CPU and memory requests and limits
-- `worker.persistence.recording.*`: Recording PVC configuration
-- `worker.persistence.authStorage.*`: Auth storage PVC configuration
-- `podSecurityContext`: Pod-level security context applied to the worker pod
+Important values include:
 
-The default values are defined in `values.yaml` and should be reviewed before
-deployment, especially the image, load balancer annotations, storage classes,
-and persistence settings.
+- `image.repository`, `image.tag`, `image.pullPolicy`
+- `imagePullSecrets`
+- `worker.config`
+- `worker.terminationGracePeriodSeconds`
+- `worker.service.proxy.enabled`, `worker.service.proxy.type`,
+  `worker.service.proxy.port`, `worker.service.proxy.targetPort`,
+  `worker.service.proxy.annotations`
+- `worker.service.ops.enabled`, `worker.service.ops.type`,
+  `worker.service.ops.port`, `worker.service.ops.targetPort`,
+  `worker.service.ops.annotations`
+- `worker.resources`
+- `worker.persistence.recording.enabled`, `worker.persistence.recording.size`,
+  `worker.persistence.recording.accessMode`,
+  `worker.persistence.recording.storageClass`,
+  `worker.persistence.recording.path`
+- `worker.persistence.authStorage.size`,
+  `worker.persistence.authStorage.accessMode`,
+  `worker.persistence.authStorage.storageClass`,
+  `worker.persistence.authStorage.path`
+- `podSecurityContext`
+- `containerSecurityContext`
+- `podAnnotations`
+- `nodeSelector`, `tolerations`, `affinity`
+- `fullnameOverride`
 
 ## Persistence
 
-Two persistence areas are supported:
+The chart uses two storage locations:
 
-- Recording storage mounted at `/boundary/recording`
 - Auth storage mounted at `/var/lib/boundary`
+- Recording storage mounted at `/boundary/recording`
 
-If auth storage persistence is disabled, the chart falls back to `emptyDir` for
-that path. If recording persistence is disabled, no recording volume is mounted.
+Auth storage is always backed by a PVC rendered from
+`worker.persistence.authStorage.*`. Recording storage is optional and is only
+mounted when `worker.persistence.recording.enabled=true`.
 
 Review storage class names before installing. The defaults in this repository
-use `gp2`, which may not exist in every cluster.
+use `gp2`, which is not available in every environment.
 
 ## Services
 
 By default, the chart enables:
 
 - A proxy service exposed as `LoadBalancer` on port `9202`
-- An ops service exposed internally as `ClusterIP` on port `9203`
+- An ops service exposed as `ClusterIP` on port `9203`
 
-The proxy service includes AWS NLB annotations by default. If you are not
-deploying on AWS, you should override or remove those annotations.
+The default proxy annotations target AWS NLB. When the proxy service type is not
+`LoadBalancer`, the chart strips the AWS load balancer annotations and keeps any
+non-AWS custom annotations you set.
 
-## Notes
+## Operational Notes
 
-- The chart deploys a single worker replica.
-- The worker container expects a valid `worker.config` to be provided.
-- The chart uses an init container to create and set ownership on persistence
-  paths before the worker starts.
+- The chart deploys one worker replica.
+- The pod sets `automountServiceAccountToken: false`.
+- The worker container exposes ports `9202` and `9203` and uses TCP readiness
+  and liveness probes on the proxy port.
+- The deployment includes checksum annotations so config or worker value changes
+  trigger a rollout.
+- Resource names are derived from the release name, for example
+  `<release>-deployment`, `<release>-config`, `<release>-proxy`, and
+  `<release>-auth-storage`.
 
-## Security
+## Local Validation
 
-If you believe you have found a vulnerability, do not open a public issue.
-Follow the reporting process in [SECURITY.md](SECURITY.md).
+The repository includes local targets for formatting, linting, unit tests, and
+acceptance testing:
+
+```console
+$ make format
+$ make unit-test
+$ make lint
+```
+
+`make lint` installs required local tools on macOS if needed and then runs Helm
+linting, template rendering, Kubernetes schema validation, Trivy, and
+Kubescape.
+
+## Acceptance Workflow
+
+The repository also includes an acceptance workflow built around KIND:
+
+```console
+$ make acceptance-setup
+$ make worker-config
+$ make acceptance-helm
+$ make acceptance-test
+```
+
+`make worker-config` authenticates to Boundary and generates `worker.hcl` from
+`scripts/worker-template.hcl`. It expects these environment variables:
+
+- `BOUNDARY_ADDR`
+- `BOUNDARY_LOGIN_NAME`
+- `BOUNDARY_PASSWORD`
+- `BOUNDARY_CLUSTER_ID`
+
+To run the entire flow in one command:
+
+```console
+$ make acceptance-full
+```
+
+To clean up the KIND cluster and generated worker configuration:
+
+```console
+$ make acceptance-cleanup
+```
 
 ## Contributing
 
 Contribution expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
-The repository also includes markdown and YAML linting in CI, so keep README and
+The repository includes Markdown and YAML linting in CI, so keep README and
 workflow changes consistent with those checks.
