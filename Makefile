@@ -4,6 +4,7 @@
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: kind-test kind-test-setup kind-test-run kind-test-cleanup kind-test-full
 
 # ================================
 # Help Target
@@ -37,6 +38,13 @@ help:
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup - Delete acceptance cluster"
+	@echo ""
+	@echo "KIND Integration Test targets:"
+	@echo "  make kind-test-setup    - Setup environment and load .env file"
+	@echo "  make kind-test-run      - Run kind-test.sh with required environment variables"
+	@echo "  make kind-test-cleanup  - Delete KIND cluster and cleanup"
+	@echo "  make kind-test-full     - Run complete KIND test workflow (setup + run + cleanup)"
+	@echo "  make kind-test          - Alias for kind-test-run"
 	@echo "================================"
 
 # ================================
@@ -498,3 +506,174 @@ acceptance-cleanup:
 	fi
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
+
+# ================================
+# KIND Integration Test Targets
+# ================================
+
+kind-test-setup:
+	@echo "================================"
+	@echo "Setting up KIND Test Environment"
+	@echo "================================"
+	@echo ""
+	@echo "Checking dependencies..."
+	@# Check for required tools
+	@if ! command -v kind >/dev/null 2>&1; then \
+		echo "❌ kind is not installed"; \
+		echo "Installing kind..."; \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			brew install kind; \
+		else \
+			curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64; \
+			chmod +x ./kind; \
+			sudo mv ./kind /usr/local/bin/kind; \
+		fi; \
+	fi
+	@echo "✅ kind is installed"
+	@if ! command -v kubectl >/dev/null 2>&1; then \
+		echo "❌ kubectl is not installed"; \
+		exit 1; \
+	fi
+	@echo "✅ kubectl is installed"
+	@if ! command -v boundary >/dev/null 2>&1; then \
+		echo "❌ boundary CLI is not installed"; \
+		exit 1; \
+	fi
+	@echo "✅ boundary CLI is installed"
+	@if ! command -v jq >/dev/null 2>&1; then \
+		echo "⚠️  jq is not installed (recommended for JSON parsing)"; \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			echo "Installing jq..."; \
+			brew install jq; \
+		fi; \
+	fi
+	@echo "✅ jq is installed"
+	@echo ""
+	@echo "Loading environment variables from .env..."
+	@if [ ! -f .env ]; then \
+		echo "❌ .env file not found"; \
+		echo "Please create .env file with:"; \
+		echo "  BOUNDARY_ADDR=https://your-cluster.boundary.hcp.to"; \
+		echo "  BOUNDARY_LOGIN_NAME=your-login"; \
+		echo "  BOUNDARY_PASSWORD=your-password"; \
+		echo "  BOUNDARY_CLUSTER_ID=your-cluster-id"; \
+		exit 1; \
+	fi
+	@echo "✅ .env file found"
+	@echo ""
+	@echo "================================"
+	@echo "✅ KIND Test Environment Ready!"
+	@echo "================================"
+
+kind-test-run:
+	@echo "================================"
+	@echo "Running KIND Integration Test"
+	@echo "================================"
+	@# Check if environment variables are already set
+	@if [ -n "$$BOUNDARY_ADDR" ] && [ -n "$$BOUNDARY_TOKEN" ] && [ -n "$$TARGET_ID" ] && [ -n "$$WORKER_TOKEN" ]; then \
+		echo "✅ Using pre-set environment variables"; \
+		echo "  BOUNDARY_ADDR: $$BOUNDARY_ADDR"; \
+		echo "  TARGET_ID: $$TARGET_ID"; \
+		echo ""; \
+		echo "Running kind-test.sh..."; \
+		cd tests/acceptance && bash kind-test.sh; \
+	else \
+		echo "Environment variables not set, loading from .env..."; \
+		if [ ! -f .env ]; then \
+			echo "❌ .env file not found"; \
+			echo ""; \
+			echo "Either:"; \
+			echo "  1. Create .env file with BOUNDARY_ADDR, BOUNDARY_LOGIN_NAME, BOUNDARY_PASSWORD"; \
+			echo "  2. Set environment variables manually:"; \
+			echo "     export BOUNDARY_ADDR=https://..."; \
+			echo "     export BOUNDARY_TOKEN=at_..."; \
+			echo "     export TARGET_ID=ttcp_..."; \
+			echo "     export WORKER_TOKEN=neslat_..."; \
+			exit 1; \
+		fi; \
+		set -a; . ./.env; set +a; \
+		if [ -z "$$BOUNDARY_ADDR" ] || [ -z "$$BOUNDARY_LOGIN_NAME" ] || [ -z "$$BOUNDARY_PASSWORD" ]; then \
+			echo "❌ Required environment variables not set in .env"; \
+			echo "Required: BOUNDARY_ADDR, BOUNDARY_LOGIN_NAME, BOUNDARY_PASSWORD"; \
+			exit 1; \
+		fi; \
+		echo "✅ Environment variables loaded"; \
+		echo ""; \
+		echo "Authenticating with Boundary..."; \
+		echo "$$BOUNDARY_PASSWORD" > /tmp/boundary_pass.txt; \
+		AUTH_OUTPUT=$$(boundary authenticate password \
+			-login-name "$$BOUNDARY_LOGIN_NAME" \
+			-password file:///tmp/boundary_pass.txt \
+			-addr "$$BOUNDARY_ADDR" \
+			-format json 2>&1); \
+		rm -f /tmp/boundary_pass.txt; \
+		if [ $$? -ne 0 ]; then \
+			echo "❌ Authentication failed"; \
+			echo "$$AUTH_OUTPUT"; \
+			exit 1; \
+		fi; \
+		BOUNDARY_TOKEN=$$(echo "$$AUTH_OUTPUT" | jq -r '.item.attributes.token'); \
+		if [ -z "$$BOUNDARY_TOKEN" ] || [ "$$BOUNDARY_TOKEN" = "null" ]; then \
+			echo "❌ Failed to extract token"; \
+			exit 1; \
+		fi; \
+		export BOUNDARY_TOKEN; \
+		echo "✅ Authenticated successfully"; \
+		echo ""; \
+		echo "Getting target ID..."; \
+		TARGET_OUTPUT=$$(boundary targets list -recursive -addr="$$BOUNDARY_ADDR" -token=env://BOUNDARY_TOKEN -format=json 2>&1); \
+		if [ $$? -ne 0 ]; then \
+			echo "❌ Failed to list targets"; \
+			echo "$$TARGET_OUTPUT"; \
+			exit 1; \
+		fi; \
+		TARGET_ID=$$(echo "$$TARGET_OUTPUT" | jq -r '.items[0].id // empty'); \
+		if [ -z "$$TARGET_ID" ]; then \
+			echo "❌ No targets found"; \
+			exit 1; \
+		fi; \
+		echo "✅ Found target: $$TARGET_ID"; \
+		echo ""; \
+		echo "Creating worker token..."; \
+		WORKER_OUTPUT=$$(boundary workers create controller-led -scope-id global -addr="$$BOUNDARY_ADDR" -token=env://BOUNDARY_TOKEN -format=json 2>&1); \
+		if [ $$? -ne 0 ]; then \
+			echo "❌ Failed to create worker"; \
+			echo "$$WORKER_OUTPUT"; \
+			exit 1; \
+		fi; \
+		WORKER_TOKEN=$$(echo "$$WORKER_OUTPUT" | jq -r '.item.controller_generated_activation_token // empty'); \
+		if [ -z "$$WORKER_TOKEN" ]; then \
+			echo "❌ Failed to extract worker token"; \
+			exit 1; \
+		fi; \
+		echo "✅ Worker token created"; \
+		echo ""; \
+		echo "Running kind-test.sh..."; \
+		cd tests/acceptance && \
+		export BOUNDARY_ADDR="$$BOUNDARY_ADDR" && \
+		export BOUNDARY_TOKEN="$$BOUNDARY_TOKEN" && \
+		export TARGET_ID="$$TARGET_ID" && \
+		export WORKER_TOKEN="$$WORKER_TOKEN" && \
+		bash kind-test.sh; \
+	fi
+
+kind-test-cleanup:
+	@echo "================================"
+	@echo "Cleaning up KIND Test Cluster"
+	@echo "================================"
+	@if kind get clusters 2>/dev/null | grep -q "^boundary-acceptance$$"; then \
+		echo "Deleting KIND cluster 'boundary-acceptance'..."; \
+		kind delete cluster --name boundary-acceptance; \
+		echo "✅ KIND cluster deleted"; \
+	else \
+		echo "⚠️  KIND cluster 'boundary-acceptance' does not exist"; \
+	fi
+	@echo "✅ Cleanup complete"
+
+kind-test-full: kind-test-setup kind-test-run kind-test-cleanup
+	@echo ""
+	@echo "================================"
+	@echo "✅ KIND Integration Test Complete!"
+	@echo "================================"
+
+kind-test: kind-test-run
