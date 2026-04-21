@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Helm
         run: make setup-helm
@@ -22,7 +22,7 @@ jobs:
         run: make lint-helm-k8s
 
       - name: Upload rendered templates
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rendered-templates
           path: rendered.yaml
@@ -34,10 +34,10 @@ jobs:
     needs: lint
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download rendered templates
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rendered-templates
 
@@ -55,7 +55,7 @@ jobs:
 
       - name: Upload Kubescape results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kubescape-results
           path: kubescape-output.json
@@ -74,7 +74,7 @@ jobs:
       BOUNDARY_PASSWORD: ${{ secrets.BOUNDARY_PASSWORD }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup acceptance environment
         run: make acceptance-setup
@@ -98,7 +98,7 @@ jobs:
     needs: [lint, security]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Print test job info
         run: |
