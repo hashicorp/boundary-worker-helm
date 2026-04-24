@@ -670,10 +670,13 @@ kind-test-cleanup:
 	fi
 	@echo "✅ Cleanup complete"
 
-kind-test-full: kind-test-setup kind-test-run kind-test-cleanup
+kind-test-full: kind-test-setup kind-test-run
 	@echo ""
 	@echo "================================"
 	@echo "✅ KIND Integration Test Complete!"
 	@echo "================================"
+	@echo ""
+	@echo "Note: KIND cluster 'boundary-acceptance' is still running"
+	@echo "To cleanup manually, run: make kind-test-cleanup"
 
 kind-test: kind-test-run

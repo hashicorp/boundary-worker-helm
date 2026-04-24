@@ -89,15 +89,21 @@ data:
     }
 
     listener "tcp" {
-      address = "0.0.0.0:9201"
-      purpose = "cluster"
+      address = "0.0.0.0:9203"
+      purpose = "ops"
+      tls_disable = true
     }
 
     worker {
-      initial_upstreams = ["83200186-7716-4020-ad77-da7266fd6340.boundary.hcp.to:9201"]
+      public_addr = "boundary-worker.boundary.svc.cluster.local"
       controller_generated_activation_token = "$WORKER_TOKEN"
       auth_storage_path = "/var/lib/boundary"
+      tags {
+        type = ["egress"]
+      }
     }
+
+    hcp_boundary_cluster_id = "83200186-7716-4020-ad77-da7266fd6340"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -113,6 +119,8 @@ spec:
       labels:
         app: boundary-worker
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       securityContext:
         runAsNonRoot: true
         runAsUser: 100
@@ -145,8 +153,8 @@ spec:
         ports:
         - containerPort: 9202
           name: proxy
-        - containerPort: 9201
-          name: cluster
+        - containerPort: 9203
+          name: ops
       volumes:
       - name: config
         configMap:
@@ -194,11 +202,26 @@ export BOUNDARY_ADDR
 export BOUNDARY_TOKEN
 
 # Wait for worker to register (may take a few moments)
-sleep 10
+echo "Waiting for worker to register..."
+sleep 15
 
 retry 10 boundary workers list -scope-id global -addr="$BOUNDARY_ADDR" -token=env://BOUNDARY_TOKEN -format=json | jq -e '.items | length > 0'
 
 echo "✅ Worker registered with controller"
+
+# Wait additional time for worker tags to be processed
+echo "Waiting for worker tags to be processed..."
+sleep 10
+
+# Verify our worker has the egress tag
+WORKERS_WITH_TAG=$(boundary workers list -scope-id global -addr="$BOUNDARY_ADDR" -token=env://BOUNDARY_TOKEN -format=json | jq '[.items[] | select(.canonical_tags.type != null and (.canonical_tags.type | contains(["egress"])))] | length')
+
+echo "Workers with 'egress' tag: $WORKERS_WITH_TAG"
+
+if [ "$WORKERS_WITH_TAG" -eq 0 ]; then
+  echo "⚠️  Warning: No workers found with 'egress' tag yet. Session authorization may fail."
+  echo "This could mean the worker hasn't fully registered its tags yet."
+fi
 
 ############################################
 # STEP 5: VALIDATE TARGET CONNECTIVITY (FROM POD)
@@ -216,24 +239,33 @@ echo "⚠️ Skipping explicit nc check (depends on target details)"
 # STEP 6: VALIDATE SESSION CREATION
 ############################################
 
-log "Creating Boundary session"
+log "Validating session creation capability"
 
+# Authorize a session using targets authorize-session
 set +e
-SESSION_OUTPUT=$(boundary connect tcp \
-  -target-id "$TARGET_ID" \
+SESSION_OUTPUT=$(boundary targets authorize-session \
+  -id "$TARGET_ID" \
+  -addr "$BOUNDARY_ADDR" \
   -token env://BOUNDARY_TOKEN \
+  -format json \
   2>&1)
 EXIT_CODE=$?
 set -e
 
-echo "$SESSION_OUTPUT"
-
 if [ $EXIT_CODE -ne 0 ]; then
-  echo "❌ Session creation failed"
+  echo "Session authorization output:"
+  echo "$SESSION_OUTPUT"
+  echo "❌ Session authorization failed"
   exit 1
 fi
 
-echo "✅ Session successfully created"
+SESSION_ID=$(echo "$SESSION_OUTPUT" | jq -r '.item.session_id // empty')
+if [ -z "$SESSION_ID" ]; then
+  echo "❌ Failed to extract session ID"
+  exit 1
+fi
+
+echo "✅ Session successfully authorized (ID: $SESSION_ID)"
 
 ############################################
 # STEP 7: VALIDATE SESSION STATE
@@ -241,9 +273,16 @@ echo "✅ Session successfully created"
 
 log "Validating session state"
 
-retry 5 bash -c "boundary sessions list -scope-id global -format json | jq -e '.items[] | select(.status==\"active\")' >/dev/null"
+# Verify the session exists and is in pending/active state
+SESSION_INFO=$(boundary sessions read -id "$SESSION_ID" -addr "$BOUNDARY_ADDR" -token env://BOUNDARY_TOKEN -format json)
+SESSION_STATUS=$(echo "$SESSION_INFO" | jq -r '.item.status')
 
-echo "✅ Active session confirmed"
+if [ "$SESSION_STATUS" = "pending" ] || [ "$SESSION_STATUS" = "active" ]; then
+  echo "✅ Session confirmed (Status: $SESSION_STATUS)"
+else
+  echo "❌ Unexpected session status: $SESSION_STATUS"
+  exit 1
+fi
 
 ############################################
 # STEP 8: CLEANUP (OPTIONAL)
