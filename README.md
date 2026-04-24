@@ -42,7 +42,7 @@ This chart packages that deployment model into a reusable Helm release.
 By default, a release renders the following resources:
 
 - One Deployment with exactly one worker replica
-- One mandatory PersistentVolumeClaim for Boundary auth storage
+- One optional PersistentVolumeClaim for Boundary auth storage (not required when using KMS auth)
 - One optional PersistentVolumeClaim for session recording storage
 - One ConfigMap containing the Boundary worker configuration file
 - One proxy Service for session traffic
@@ -99,6 +99,7 @@ Check `values.yaml` before installing, especially:
 - `worker.service.proxy.type`
 - `worker.service.proxy.annotations`
 - `worker.service.ops.type`
+- `worker.persistence.authStorage.enabled`
 - `worker.persistence.authStorage.storageClass`
 - `worker.persistence.recording.enabled`
 - `worker.persistence.recording.storageClass`
@@ -161,7 +162,7 @@ kubectl logs -n boundary deployment/boundary-worker-deployment
 Confirm that:
 
 - The pod becomes ready
-- The auth storage PVC is bound
+- The auth storage PVC's are bound if enabled'
 - The proxy and ops Services match your intended exposure model
 - The worker appears in Boundary and becomes eligible for session assignment
 
@@ -424,8 +425,17 @@ For KMS-based worker authentication in self-managed Boundary deployments:
 
 1. Configure worker authentication through Boundary with KMS worker auth enabled.
 2. Add the required `kms "worker-auth"` configuration and related worker settings to the HCL file.
-3. Install the chart.
-4. Verify the worker authenticates successfully and persists its credentials to auth storage.
+3. Disable the auth storage PVC, as KMS auth does not require persistent auth storage:
+
+```yaml
+worker:
+  persistence:
+    authStorage:
+      enabled: false
+```
+
+4. Install the chart.
+5. Verify the worker authenticates successfully via KMS.
 
 ## Configuration Reference
 
@@ -453,6 +463,7 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `worker.resources.requests.memory` | `512Mi` | Memory request for the worker container. |
 | `worker.resources.limits.cpu` | `200m` | CPU limit for the worker container. |
 | `worker.resources.limits.memory` | `1Gi` | Memory limit for the worker container. |
+| `worker.persistence.authStorage.enabled` | `true` | Whether to create the auth storage PVC. Set to `false` when using KMS auth, which does not require persistent auth storage. |
 | `worker.persistence.authStorage.size` | `1Gi` | Size of the auth storage PVC. |
 | `worker.persistence.authStorage.accessMode` | `ReadWriteOnce` | Access mode for the auth storage PVC. |
 | `worker.persistence.authStorage.storageClass` | `gp2` | StorageClass for the auth storage PVC. |

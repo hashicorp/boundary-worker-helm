@@ -91,7 +91,7 @@ tests:
           path: spec.accessModes[0]
           value: ReadWriteOnce
 
-  - it: should always create auth PVC
+  - it: should create auth PVC by default
     set:
       worker.persistence.recording.enabled: false
     asserts:
@@ -103,6 +103,37 @@ tests:
       - equal:
           path: metadata.labels["storage-type"]
           value: auth
+        documentIndex: 0
+
+  - it: should not create auth PVC when disabled
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create any PVC when both disabled
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should only create recording PVC when auth storage disabled
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PersistentVolumeClaim
+        documentIndex: 0
+      - equal:
+          path: metadata.labels["storage-type"]
+          value: recording
         documentIndex: 0
 
   # ============================================================================

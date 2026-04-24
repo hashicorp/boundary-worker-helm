@@ -42,6 +42,7 @@ worker:
       storageClass: "gp2"
       path: "/boundary/recording"
     authStorage:
+      enabled: true
       size: "1Gi"
       accessMode: ReadWriteOnce
       storageClass: "gp2"
