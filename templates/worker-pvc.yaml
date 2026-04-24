@@ -18,9 +18,10 @@ spec:
       storage: {{ .Values.worker.persistence.recording.size }}
 {{- end }}
 
-{{- if .Values.worker.persistence.recording.enabled }}
+{{- if and .Values.worker.persistence.recording.enabled .Values.worker.persistence.authStorage.enabled }}
 ---
 {{- end }}
+{{- if .Values.worker.persistence.authStorage.enabled }}
 # Boundary Worker Auth Storage PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -38,3 +39,4 @@ spec:
   resources:
     requests:
       storage: {{ .Values.worker.persistence.authStorage.size }}
+{{- end }}

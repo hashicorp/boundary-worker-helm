@@ -395,6 +395,46 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[3].name
           value: recording-storage
 
+  - it: should use emptyDir for auth-storage volume when auth PVC disabled
+    template: worker-deployment.yaml
+    set:
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[2].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.volumes[2].emptyDir
+          value: {}
+      - isNull:
+          path: spec.template.spec.volumes[2].persistentVolumeClaim
+
+  - it: should mount auth-storage even when auth PVC disabled
+    template: worker-deployment.yaml
+    set:
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[2].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[2].mountPath
+          value: /var/lib/boundary
+
+  - it: should use PVC for auth-storage volume when auth PVC enabled
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    set:
+      worker.persistence.authStorage.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[2].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.volumes[2].persistentVolumeClaim.claimName
+          value: test-release-auth-storage
+
   # ============================================================================
   # DEPLOYMENT SPEC TESTS
   # ============================================================================
