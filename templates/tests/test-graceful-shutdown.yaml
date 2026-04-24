@@ -47,7 +47,7 @@ spec:
       echo ""
       echo "Checking terminationGracePeriodSeconds..."
       GRACE_PERIOD=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.terminationGracePeriodSeconds}')
-      EXPECTED_GRACE="{{ .Values.worker.terminationGracePeriodSeconds | default 7200 }}"
+      EXPECTED_GRACE="{{ .Values.worker.terminationGracePeriodSeconds }}"
       
       if [ -z "$GRACE_PERIOD" ]; then
         echo "❌ FAILED: terminationGracePeriodSeconds not set"

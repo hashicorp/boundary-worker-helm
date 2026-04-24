@@ -9,7 +9,7 @@ image:
 # Worker configuration
 worker:
   config: ""
-  terminationGracePeriodSeconds: 90 # Default: 2 hours
+  terminationGracePeriodSeconds: 7200
   service:
     proxy:
       enabled: true
