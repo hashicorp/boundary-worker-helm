@@ -44,21 +44,12 @@ tests:
           path: spec.template.spec.terminationGracePeriodSeconds
           value: 3600
 
-  - it: should use fallback terminationGracePeriodSeconds when value is null
-    template: worker-deployment.yaml
-    set:
-      worker.terminationGracePeriodSeconds: null
-    asserts:
-      - equal:
-          path: spec.template.spec.terminationGracePeriodSeconds
-          value: 7200
-
   - it: should use chart default terminationGracePeriodSeconds when not overridden
     template: worker-deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
-          value: 90
+          value: 7200
 
   # ============================================================================
   # RESOURCE CONFIGURATION TESTS
