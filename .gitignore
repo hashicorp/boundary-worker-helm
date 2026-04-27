@@ -7,3 +7,4 @@ yamllint-output.txt
 trivy-output.txt
 kubescape-output.json
 worker.hcl
+.env
