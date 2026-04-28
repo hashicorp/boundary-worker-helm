@@ -197,7 +197,84 @@ SESSION_STATUS=$(printf '%s\n' "${SESSION_OUT}" \
     | cut -d'"' -f4 || true)
 [ -n "${SESSION_STATUS}" ] && info "Session status: ${SESSION_STATUS}"
 
+info "Cancelling authorized session ${SESSION_ID}..."
+boundary sessions cancel \
+    -id "${SESSION_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN 2>&1 || true
+pass "Authorized session cancelled"
+
 echo ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scenario 4: TCP connection & session field validation
+# ══════════════════════════════════════════════════════════════════════════════
+echo "[Scenario 4] TCP connection & session field validation"
+echo "───────────────────────────────────────────────────────"
+
+info "Target:  ${BOUNDARY_TARGET_ID}"
+info "Address: ${BOUNDARY_ADDR}"
+info "Establishing proxy connection..."
+echo ""
+
+CONN_OUT=$(mktemp)
+boundary connect \
+    -target-id "${BOUNDARY_TARGET_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN > "${CONN_OUT}" 2>&1 &
+CONN_PID=$!
+
+for i in $(seq 1 30); do
+    if grep -q "Session ID:" "${CONN_OUT}" 2>/dev/null; then break; fi
+    sleep 1
+done
+
+echo "================================"
+echo "Session Details"
+echo "================================"
+cat "${CONN_OUT}"
+echo ""
+
+CONN_SESSION_ID=$(grep "Session ID:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_ADDR=$(grep "Address:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_PORT=$(grep "Port:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_PROTO=$(grep "Protocol:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_EXPIRY=$(grep "Expiration:" "${CONN_OUT}" | sed 's/.*Expiration:[[:space:]]*//')
+CONN_LIMIT=$(grep "Connection Limit:" "${CONN_OUT}" | awk '{print $NF}')
+
+echo "================================"
+echo "Session Validation"
+echo "================================"
+CONN_PASS=1
+if [ -n "${CONN_SESSION_ID}" ]; then echo "✅ Session ID:          ${CONN_SESSION_ID}"; else echo "❌ Session ID:          MISSING"; CONN_PASS=0; fi
+if [ -n "${CONN_PROXY_ADDR}" ]; then echo "✅ Address:             ${CONN_PROXY_ADDR}"; else echo "❌ Address:             MISSING"; CONN_PASS=0; fi
+if [ -n "${CONN_PROXY_PORT}" ]; then echo "✅ Port:                ${CONN_PROXY_PORT}"; else echo "❌ Port:                MISSING"; CONN_PASS=0; fi
+if [ -n "${CONN_PROXY_PROTO}" ]; then echo "✅ Protocol:            ${CONN_PROXY_PROTO}"; else echo "❌ Protocol:            MISSING"; CONN_PASS=0; fi
+if [ -n "${CONN_PROXY_EXPIRY}" ]; then echo "✅ Expiration:          ${CONN_PROXY_EXPIRY}"; else echo "❌ Expiration:          MISSING"; CONN_PASS=0; fi
+if [ -n "${CONN_LIMIT}" ]; then echo "✅ Connection Limit:    ${CONN_LIMIT}"; else echo "❌ Connection Limit:    MISSING"; CONN_PASS=0; fi
+echo ""
+
+if [ -n "${CONN_SESSION_ID}" ]; then
+    info "Waiting 1 minute before cancelling session..."
+    sleep 60
+    info "Cancelling session ${CONN_SESSION_ID}..."
+    boundary sessions cancel \
+        -id "${CONN_SESSION_ID}" \
+        -addr "${BOUNDARY_ADDR}" \
+        -token env://BOUNDARY_TOKEN 2>&1 || true
+    pass "Session cancelled"
+fi
+kill "${CONN_PID}" 2>/dev/null || true
+wait "${CONN_PID}" 2>/dev/null || true
+rm -f "${CONN_OUT}"
+
+[ "${CONN_PASS}" -eq 1 ] || fail "One or more session fields were missing"
+pass "All session fields validated"
+echo ""
+
+echo "========================================"
+echo " ✅ All Scenarios Passed"
+echo "========================================"
 echo "========================================"
 echo -e "${GREEN}✅ All INT acceptance tests passed!${NC}"
 echo "========================================"

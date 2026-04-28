@@ -486,11 +486,17 @@ acceptance-test:
 	@echo "================================"
 	@echo "Running Acceptance Tests"
 	@echo "================================"
-	@if [ ! -f tests/acceptance/acceptance-test.sh ]; then \
-		echo "❌ Test script not found: tests/acceptance/acceptance-test.sh"; \
-		exit 1; \
-	fi
-	@bash tests/acceptance/acceptance-test.sh
+	@for script in tests/acceptance/*.sh; do \
+		echo ""; \
+		echo "--------------------------------"; \
+		echo "Running: $$script"; \
+		echo "--------------------------------"; \
+		bash $$script || exit 1; \
+	done
+	@echo ""
+	@echo "================================"
+	@echo "✅ All acceptance tests passed!"
+	@echo "================================"
 
 
 acceptance-full:
@@ -521,77 +527,3 @@ acceptance-cleanup:
 	fi
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
-
-# ================================
-# INT Acceptance Testing Targets
-# ================================
-
-acceptance-int-test:
-	@echo "================================"
-	@echo "Running INT Acceptance Tests"
-	@echo "================================"
-	@if [ ! -f tests/acceptance/int-acceptance-test.sh ]; then \
-		echo "❌ Test script not found: tests/acceptance/int-acceptance-test.sh"; \
-		exit 1; \
-	fi
-	@bash tests/acceptance/int-acceptance-test.sh
-	@echo ""
-	@echo "================================"
-	@echo "Session Connection Details"
-	@echo "================================"
-	@$(MAKE) acceptance-connect
-
-acceptance-int-full:
-	@echo "================================"
-	@echo "Running Full INT Acceptance Workflow"
-	@echo "================================"
-	@echo "Steps: setup → worker-config → helm → int-test"
-	@echo ""
-	@$(MAKE) acceptance-setup
-	@$(MAKE) worker-config
-	@$(MAKE) acceptance-helm
-	@$(MAKE) acceptance-int-test
-	@echo ""
-	@echo "================================"
-	@echo "✅ INT Acceptance Workflow Complete!"
-	@echo "================================"
-	@echo ""
-	@echo "To cleanup, run: make acceptance-cleanup"
-
-acceptance-connect:
-	@echo "================================"
-	@echo "Connecting to Target via Boundary Worker"
-	@echo "================================"
-	@if [ -z "$$BOUNDARY_ADDR" ]; then \
-		echo "❌ BOUNDARY_ADDR is not set. Source your .env file."; \
-		exit 1; \
-	fi
-	@if [ -z "$$BOUNDARY_TARGET_ID" ]; then \
-		echo "❌ BOUNDARY_TARGET_ID is not set. Add it to your .env file (e.g. ttcp_xxxxxxxxxxxx)."; \
-		exit 1; \
-	fi
-	@echo "Authenticating with Boundary..."
-	@AUTH_OUT=$$(boundary authenticate password \
-		-addr $$BOUNDARY_ADDR \
-		-auth-method-id $$BOUNDARY_AUTH_METHOD_ID \
-		-login-name $$BOUNDARY_LOGIN_NAME \
-		-password env://BOUNDARY_PASSWORD \
-		-keyring-type=none 2>&1); \
-	STATUS=$$?; \
-	if [ $$STATUS -ne 0 ]; then \
-		echo "❌ Authentication failed"; \
-		printf '%s\n' "$$AUTH_OUT"; \
-		exit $$STATUS; \
-	fi; \
-	BOUNDARY_TOKEN=$$(printf '%s\n' "$$AUTH_OUT" | awk '/The token is:/ { getline; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", $$0); print $$0; exit }'); \
-	export BOUNDARY_TOKEN; \
-	echo "✅ Authenticated"; \
-	echo ""; \
-	echo "Target:  $$BOUNDARY_TARGET_ID"; \
-	echo "Address: $$BOUNDARY_ADDR"; \
-	echo "(Press Ctrl+C to close the session)"; \
-	echo ""; \
-	boundary connect \
-		-target-id $$BOUNDARY_TARGET_ID \
-		-addr $$BOUNDARY_ADDR \
-		-token env://BOUNDARY_TOKEN
