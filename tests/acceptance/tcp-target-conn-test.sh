@@ -1,5 +1,5 @@
 #!/bin/bash
-# INT Acceptance Test
+# TCP Target Connection Test
 # Scenarios:
 #   1. Worker running in KIND cluster
 #   2. Worker registers with INT long-lived Boundary cluster
@@ -20,7 +20,7 @@ info() { echo -e "   $1"; }
 warn() { echo -e "${YELLOW}⚠️  WARN:${NC}  $1"; }
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-CONTEXT="kind-acceptance"
+CONTEXT="TCP Target Connection-acceptance"
 NAMESPACE="boundary"
 DEPLOY="boundary-worker-deployment"
 TIMEOUT=300   # seconds to wait for registration / deployment readiness
@@ -34,7 +34,7 @@ if [ -f .env ]; then
 fi
 
 echo "========================================"
-echo " INT Acceptance Test Suite"
+echo " TCP Target Connection Test Suite"
 echo "========================================"
 echo ""
 
@@ -229,12 +229,6 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-echo "================================"
-echo "Session Details"
-echo "================================"
-cat "${CONN_OUT}"
-echo ""
-
 CONN_SESSION_ID=$(grep "Session ID:" "${CONN_OUT}" | awk '{print $NF}')
 CONN_PROXY_ADDR=$(grep "Address:" "${CONN_OUT}" | awk '{print $NF}')
 CONN_PROXY_PORT=$(grep "Port:" "${CONN_OUT}" | awk '{print $NF}')
@@ -243,15 +237,23 @@ CONN_PROXY_EXPIRY=$(grep "Expiration:" "${CONN_OUT}" | sed 's/.*Expiration:[[:sp
 CONN_LIMIT=$(grep "Connection Limit:" "${CONN_OUT}" | awk '{print $NF}')
 
 echo "================================"
-echo "Session Validation"
+echo "Session Details"
 echo "================================"
+echo "Session ID:        ${CONN_SESSION_ID:-MISSING}"
+echo "Address:           ${CONN_PROXY_ADDR:-MISSING}"
+echo "Port:              ${CONN_PROXY_PORT:-MISSING}"
+echo "Protocol:          ${CONN_PROXY_PROTO:-MISSING}"
+echo "Expiration:        ${CONN_PROXY_EXPIRY:-MISSING}"
+echo "Connection Limit:  ${CONN_LIMIT:-MISSING}"
+echo ""
+
 CONN_PASS=1
-if [ -n "${CONN_SESSION_ID}" ]; then echo "✅ Session ID:          ${CONN_SESSION_ID}"; else echo "❌ Session ID:          MISSING"; CONN_PASS=0; fi
-if [ -n "${CONN_PROXY_ADDR}" ]; then echo "✅ Address:             ${CONN_PROXY_ADDR}"; else echo "❌ Address:             MISSING"; CONN_PASS=0; fi
-if [ -n "${CONN_PROXY_PORT}" ]; then echo "✅ Port:                ${CONN_PROXY_PORT}"; else echo "❌ Port:                MISSING"; CONN_PASS=0; fi
-if [ -n "${CONN_PROXY_PROTO}" ]; then echo "✅ Protocol:            ${CONN_PROXY_PROTO}"; else echo "❌ Protocol:            MISSING"; CONN_PASS=0; fi
-if [ -n "${CONN_PROXY_EXPIRY}" ]; then echo "✅ Expiration:          ${CONN_PROXY_EXPIRY}"; else echo "❌ Expiration:          MISSING"; CONN_PASS=0; fi
-if [ -n "${CONN_LIMIT}" ]; then echo "✅ Connection Limit:    ${CONN_LIMIT}"; else echo "❌ Connection Limit:    MISSING"; CONN_PASS=0; fi
+[ -n "${CONN_SESSION_ID}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_ADDR}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_PORT}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_PROTO}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_EXPIRY}" ] || CONN_PASS=0
+[ -n "${CONN_LIMIT}" ] || CONN_PASS=0
 echo ""
 
 if [ -n "${CONN_SESSION_ID}" ]; then
@@ -276,5 +278,5 @@ echo "========================================"
 echo " ✅ All Scenarios Passed"
 echo "========================================"
 echo "========================================"
-echo -e "${GREEN}✅ All INT acceptance tests passed!${NC}"
+echo -e "${GREEN}✅ TCP Target Connection tests passed!${NC}"
 echo "========================================"
