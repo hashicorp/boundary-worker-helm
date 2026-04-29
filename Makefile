@@ -496,7 +496,11 @@ acceptance-full:
 	@echo "================================"
 	@echo "Running Full Acceptance Workflow"
 	@echo "================================"
-	@$(MAKE) acceptance-setup
+	@if kind get clusters | grep -q "^acceptance$$"; then \
+		echo "⚠️  KIND cluster 'acceptance' already exists — skipping acceptance-setup"; \
+	else \
+		$(MAKE) acceptance-setup; \
+	fi
 	@$(MAKE) worker-config
 	@$(MAKE) acceptance-helm
 	@$(MAKE) acceptance-test

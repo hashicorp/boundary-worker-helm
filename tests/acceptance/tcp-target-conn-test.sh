@@ -4,6 +4,7 @@
 #   1. Worker running in KIND cluster
 #   2. Worker registers with INT long-lived Boundary cluster
 #   3. Session creation validated via authorize-session
+#   4. TCP connection & session field validation
 
 set -euo pipefail
 
@@ -14,13 +15,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-pass() { echo -e "${GREEN}✅ PASSED:${NC} $1"; }
+pass() { echo -e "${GREEN}✅ $1${NC}"; }
 fail() { echo -e "${RED}❌ FAILED:${NC} $1"; exit 1; }
 info() { echo -e "   $1"; }
 warn() { echo -e "${YELLOW}⚠️  WARN:${NC}  $1"; }
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-CONTEXT="TCP Target Connection-acceptance"
+CONTEXT="kind-acceptance"
 NAMESPACE="boundary"
 DEPLOY="boundary-worker-deployment"
 TIMEOUT=300   # seconds to wait for registration / deployment readiness
@@ -38,12 +39,8 @@ echo " TCP Target Connection Test Suite"
 echo "========================================"
 echo ""
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Scenario 1: Worker running in KIND cluster
-# ══════════════════════════════════════════════════════════════════════════════
-echo "[Scenario 1] Worker running in KIND cluster"
-echo "────────────────────────────────────────────"
-
+# Test 1: Worker running in KIND cluster
+echo "[Test 1] Worker running in KIND cluster"
 info "Checking KIND cluster accessibility..."
 kubectl cluster-info --context "${CONTEXT}" >/dev/null 2>&1 \
     || fail "KIND cluster '${CONTEXT}' is not accessible. Run: make acceptance-setup"
@@ -74,12 +71,8 @@ POD=$(kubectl get pods \
 pass "Worker pod running: ${POD}"
 echo ""
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Scenario 2: Worker registers with INT long-lived cluster
-# ══════════════════════════════════════════════════════════════════════════════
-echo "[Scenario 2] Worker registers with INT long-lived cluster"
-echo "──────────────────────────────────────────────────────────"
-
+# Test 2: Worker registers with INT long-lived cluster
+echo "[Test 2] Worker registers with INT long-lived cluster"
 # Check required env vars
 for var in BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do
     [ -n "${!var:-}" ] || fail "'${var}' is not set. Check your .env file."
@@ -166,12 +159,8 @@ else
 fi
 echo ""
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Scenario 3: Session creation
-# ══════════════════════════════════════════════════════════════════════════════
-echo "[Scenario 3] Session creation validated"
-echo "────────────────────────────────────────"
-
+# Test 3: Session creation
+echo "[Test 3] Session creation validated"
 [ -n "${BOUNDARY_TARGET_ID:-}" ] \
     || fail "'BOUNDARY_TARGET_ID' is not set. Add it to your .env file."
 pass "Target configured: ${BOUNDARY_TARGET_ID}"
@@ -206,12 +195,8 @@ pass "Authorized session cancelled"
 
 echo ""
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Scenario 4: TCP connection & session field validation
-# ══════════════════════════════════════════════════════════════════════════════
-echo "[Scenario 4] TCP connection & session field validation"
-echo "───────────────────────────────────────────────────────"
-
+# Test 4: TCP connection & session field validation
+echo "[Test 4] TCP connection & session field validation"
 info "Target:  ${BOUNDARY_TARGET_ID}"
 info "Address: ${BOUNDARY_ADDR}"
 info "Establishing proxy connection..."
@@ -236,9 +221,7 @@ CONN_PROXY_PROTO=$(grep "Protocol:" "${CONN_OUT}" | awk '{print $NF}')
 CONN_PROXY_EXPIRY=$(grep "Expiration:" "${CONN_OUT}" | sed 's/.*Expiration:[[:space:]]*//')
 CONN_LIMIT=$(grep "Connection Limit:" "${CONN_OUT}" | awk '{print $NF}')
 
-echo "================================"
 echo "Session Details"
-echo "================================"
 echo "Session ID:        ${CONN_SESSION_ID:-MISSING}"
 echo "Address:           ${CONN_PROXY_ADDR:-MISSING}"
 echo "Port:              ${CONN_PROXY_PORT:-MISSING}"
@@ -275,8 +258,5 @@ pass "All session fields validated"
 echo ""
 
 echo "========================================"
-echo " ✅ All Scenarios Passed"
-echo "========================================"
-echo "========================================"
-echo -e "${GREEN}✅ TCP Target Connection tests passed!${NC}"
+echo -e "${GREEN}✅ All Tests Passed${NC}"
 echo "========================================"
