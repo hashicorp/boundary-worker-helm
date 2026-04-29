@@ -257,8 +257,7 @@ acceptance-setup:
 	@echo "Setting up Acceptance Environment"
 	@echo "================================"
 	@echo ""
-	@echo "Step 1: Checking dependencies..."
-	@echo "--------------------------------"
+	@echo "Checking dependencies..."
 	@# Check for kubectl
 	@if ! command -v kubectl >/dev/null 2>&1; then \
 		echo "❌ kubectl is not installed"; \
@@ -305,12 +304,10 @@ acceptance-setup:
 	fi
 	@echo "✅ boundary CLI is installed ($$(boundary version 2>/dev/null | head -n1 || echo 'version unknown'))"
 	@echo ""
-	@echo "Step 2: Setting up KIND cluster..."
-	@echo "--------------------------------"
+	@echo "Setting up KIND cluster..."
 	@if kind get clusters | grep -q "^acceptance$$"; then \
 		echo "⚠️  Acceptance cluster already exists"; \
 	else \
-		echo "Creating KIND cluster 'acceptance'..."; \
 		kind create cluster --config tests/acceptance/kind-acceptance-config.yaml; \
 		echo "✅ Acceptance cluster created"; \
 	fi
@@ -318,10 +315,6 @@ acceptance-setup:
 	@echo "Verifying cluster..."
 	@kubectl cluster-info --context kind-acceptance
 	@echo "✅ Cluster is ready"
-	@echo ""
-	@echo "================================"
-	@echo "✅ Acceptance Environment Ready!"
-	@echo "================================"
 	@echo ""
 	@echo "Installed tools:"
 	@echo "  - kubectl: $$(kubectl version --client --short 2>/dev/null | head -n1 || echo 'installed')"
@@ -338,7 +331,7 @@ acceptance-setup:
 
 worker-config:
 	@echo "================================"
-	@echo "Authenticating with Boundary"
+	@echo "Generating Worker Configuration"
 	@echo "================================"
 	@if [ -z "$$BOUNDARY_ADDR" ]; then \
 		echo "❌ BOUNDARY_ADDR environment variable is not set"; \
@@ -372,10 +365,11 @@ worker-config:
 		echo ""; \
 		exit 1; \
 	fi
+
+	@echo ""
+	@echo "Authenticating with Boundary..."
 	@echo "Boundary Address: $$BOUNDARY_ADDR"
 	@echo "Login Name: $$BOUNDARY_LOGIN_NAME"
-	@echo ""
-	@echo "Authenticating with password..."
 	@AUTH_OUT=$$(boundary authenticate password \
 		-login-name $$BOUNDARY_LOGIN_NAME \
 		-password env://BOUNDARY_PASSWORD \
@@ -392,7 +386,6 @@ worker-config:
 		exit 1; \
 	fi; \
 	export AUTH_TOKEN; \
-	echo ""; \
 	echo "✅ Successfully authenticated with Boundary"; \
 	echo ""; \
 	echo "Creating controller-led worker..."; \
@@ -414,14 +407,15 @@ worker-config:
 		echo "✅ Created worker $$WORKER_ID"; \
 	fi; \
 	echo ""; \
-	echo "Generating worker.hcl from template..."; \
+	echo "Generating worker configuration from template..."; \
 	sed -e "s|<activation-token>|$$ACTIVATION_TOKEN|g" -e "s|<cluster-id>|$$BOUNDARY_CLUSTER_ID|g" scripts/worker-template.hcl > worker.hcl; \
-	echo "✅ Created worker.hcl"
+	echo "✅ Created worker config"
 
 acceptance-helm:
-	@echo "================================"
+	@echo "============================================"
 	@echo "Installing Helm Chart in Acceptance Cluster"
-	@echo "================================"
+	@echo "============================================"
+	@echo ""
 	@echo "Checking if Helm is installed..."
 	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found. Run 'make acceptance-setup' first"; exit 1)
 	@if [ ! -f worker.hcl ]; then \
@@ -452,9 +446,8 @@ acceptance-helm:
 		--context kind-acceptance
 	@echo "✅ Deployment is ready"
 	@echo ""
-	@echo "================================"
-	@echo "Running Helm Tests"
-	@echo "================================"
+	@echo "Running Helm Tests..."
+	@echo ""
 	@echo "Cleaning up stale test pods..."
 	@kubectl delete pods -n boundary --context kind-acceptance \
 		-l app.kubernetes.io/component=test \
@@ -507,10 +500,6 @@ acceptance-full:
 	@$(MAKE) worker-config
 	@$(MAKE) acceptance-helm
 	@$(MAKE) acceptance-test
-	@echo ""
-	@echo "================================"
-	@echo "✅ Full Acceptance Test Completed!"
-	@echo "================================"
 	@echo ""
 	@echo "To cleanup, run: make acceptance-cleanup"
 
