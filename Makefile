@@ -476,26 +476,22 @@ acceptance-helm:
 	@echo "To view logs during test execution, run: kubectl logs -n boundary -l app.kubernetes.io/component=test --follow"
 
 acceptance-test:
-	@echo "================================"
-	@echo "Running Acceptance Tests"
-	@echo "================================"
 	@for script in tests/acceptance/*.sh; do \
 		echo ""; \
-		echo "--------------------------------"; \
 		echo "Running: $$script"; \
-		echo "--------------------------------"; \
+		echo ""; \
 		bash $$script || exit 1; \
 	done
 	@echo ""
-	@echo "================================"
 	@echo "✅ All acceptance tests passed!"
-	@echo "================================"
+	@echo ""
 
 
 acceptance-full:
 	@echo "================================"
 	@echo "Running Full Acceptance Workflow"
 	@echo "================================"
+	@echo ""
 	@if kind get clusters | grep -q "^acceptance$$"; then \
 		echo "⚠️  KIND cluster 'acceptance' already exists — skipping acceptance-setup"; \
 	else \
@@ -506,6 +502,7 @@ acceptance-full:
 	@$(MAKE) acceptance-test
 	@echo ""
 	@echo "To cleanup, run: make acceptance-cleanup"
+	@echo ""
 
 acceptance-cleanup:
 	@echo "================================"

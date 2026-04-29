@@ -8,17 +8,11 @@
 
 set -euo pipefail
 
-# ── Colours ────────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
-pass() { echo -e "${GREEN}✅ $1${NC}"; }
-fail() { echo -e "${RED}❌ FAILED:${NC} $1"; exit 1; }
-info() { echo -e "   $1"; }
-warn() { echo -e "${YELLOW}⚠️  WARN:${NC}  $1"; }
+pass() { echo "   ✅ $1"; }
+fail() { echo "❌ FAILED: $1"; exit 1; }
+info() { echo "   $1"; }
+warn() { echo "⚠️WARN: $1"; }
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 CONTEXT="kind-acceptance"
@@ -34,24 +28,24 @@ if [ -f .env ]; then
     set +o allexport
 fi
 
-echo "========================================"
-echo " TCP Target Connection Test Suite"
-echo "========================================"
+echo "TCP Target Connection Test Suite"
 echo ""
 
 # Test 1: Worker running in KIND cluster
-echo "[Test 1] Worker running in KIND cluster"
+echo "Validating Worker Running in KIND Cluster..."
 info "Checking KIND cluster accessibility..."
 kubectl cluster-info --context "${CONTEXT}" >/dev/null 2>&1 \
     || fail "KIND cluster '${CONTEXT}' is not accessible. Run: make acceptance-setup"
 pass "KIND cluster accessible"
+echo ""
 
 info "Checking worker deployment..."
 kubectl get deployment "${DEPLOY}" -n "${NAMESPACE}" --context "${CONTEXT}" >/dev/null 2>&1 \
     || fail "Deployment '${DEPLOY}' not found in namespace '${NAMESPACE}'. Run: make acceptance-helm"
 pass "Worker deployment '${DEPLOY}' exists"
+echo ""
 
-info "Waiting for deployment to be available (timeout: ${TIMEOUT}s)..."
+info "Waiting for deployment to be available (timeout: ${TIMEOUT}s...)"
 kubectl wait --for=condition=available \
     --timeout="${TIMEOUT}s" \
     deployment/"${DEPLOY}" \
@@ -59,6 +53,7 @@ kubectl wait --for=condition=available \
     --context "${CONTEXT}" >/dev/null 2>&1 \
     || fail "Worker deployment did not become available within ${TIMEOUT}s"
 pass "Worker deployment is available"
+echo ""
 
 POD=$(kubectl get pods \
     -n "${NAMESPACE}" \
@@ -71,17 +66,18 @@ POD=$(kubectl get pods \
 pass "Worker pod running: ${POD}"
 echo ""
 
-# Test 2: Worker registers with INT long-lived cluster
-echo "[Test 2] Worker registers with INT long-lived cluster"
+# Test 2: Validate Worker Registration with Boundary Cluster
+echo "Validating Worker Registration with Boundary Cluster..."
 # Check required env vars
 for var in BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do
     [ -n "${!var:-}" ] || fail "'${var}' is not set. Check your .env file."
 done
 pass "Required environment variables are set"
 info "Boundary address: ${BOUNDARY_ADDR}"
+echo ""
 
 # Authenticate with Boundary
-info "Authenticating with Boundary INT cluster..."
+info "Authenticating with Boundary cluster..."
 AUTH_OUT=$(boundary authenticate password \
     -addr "${BOUNDARY_ADDR}" \
     -auth-method-id "${BOUNDARY_AUTH_METHOD_ID}" \
@@ -94,6 +90,7 @@ BOUNDARY_TOKEN=$(printf '%s\n' "${AUTH_OUT}" \
 [ -n "${BOUNDARY_TOKEN}" ] || fail "Failed to extract auth token from authentication output"
 export BOUNDARY_TOKEN
 pass "Authenticated with INT cluster"
+echo ""
 
 # ── Ops health endpoint check (port-forward to ClusterIP ops service) ────────
 info "Checking worker ops health endpoint (port 9203)..."
@@ -115,6 +112,7 @@ wait "${PF_PID}" 2>/dev/null || true
 
 [ "${OPS_STATUS}" = "ok" ] || fail "Ops health endpoint /health on port 9203 did not return 200."
 pass "Worker ops health endpoint is healthy"
+echo ""
 
 # ── Auth storage: confirm node enrollment was initiated ───────────────────────
 info "Checking worker auth storage (node enrollment)..."
@@ -127,6 +125,7 @@ if [ "${AUTH_FILES}" -gt 0 ]; then
 else
     warn "Auth storage is empty; worker may not have started enrollment yet"
 fi
+echo ""
 
 # ── Boundary API: confirm worker record exists (activation token consumed) ────
 info "Verifying worker record exists in Boundary..."
@@ -148,24 +147,25 @@ for w in data.get('items', []):
 
 [ -n "${WORKER_ID}" ] || fail "No worker with 'test' tag found in Boundary. Activation token may not have been consumed."
 pass "Worker record exists in Boundary: ${WORKER_ID}"
+echo ""
 
 # ── Log: confirm worker is reaching upstream ──────────────────────────────────
 info "Checking worker is attempting upstream connection..."
+echo ""
 if kubectl --context "${CONTEXT}" -n "${NAMESPACE}" logs "${POD}" 2>/dev/null \
     | grep -q "Setting HCP Boundary cluster address\|upstream.*address\|upstreamDialerFunc"; then
     pass "Worker is actively attempting upstream connection to INT cluster"
-else
-    warn "Could not confirm upstream connection attempt in logs (worker may still be initializing)"
 fi
 echo ""
 
 # Test 3: Session creation
-echo "[Test 3] Session creation validated"
+echo "Validating Session Creation..."
 [ -n "${BOUNDARY_TARGET_ID:-}" ] \
     || fail "'BOUNDARY_TARGET_ID' is not set. Add it to your .env file."
 pass "Target configured: ${BOUNDARY_TARGET_ID}"
+echo ""
+info "Authorizing session to target..."
 
-info "Authorizing session to target ${BOUNDARY_TARGET_ID}..."
 SESSION_OUT=$(boundary targets authorize-session \
     -id "${BOUNDARY_TARGET_ID}" \
     -addr "${BOUNDARY_ADDR}" \
@@ -178,27 +178,17 @@ SESSION_ID=$(printf '%s\n' "${SESSION_OUT}" \
     | cut -d'"' -f4)
 
 [ -n "${SESSION_ID}" ] || fail "Failed to extract session_id from authorize-session response"
-pass "Session authorized: ${SESSION_ID}"
 
 SESSION_STATUS=$(printf '%s\n' "${SESSION_OUT}" \
     | grep -o '"status":"[^"]*"' \
     | head -1 \
     | cut -d'"' -f4 || true)
 [ -n "${SESSION_STATUS}" ] && info "Session status: ${SESSION_STATUS}"
-
-info "Cancelling authorized session ${SESSION_ID}..."
-boundary sessions cancel \
-    -id "${SESSION_ID}" \
-    -addr "${BOUNDARY_ADDR}" \
-    -token env://BOUNDARY_TOKEN 2>&1 || true
-pass "Authorized session cancelled"
-
+pass "Session authorized and validated"
 echo ""
 
 # Test 4: TCP connection & session field validation
-echo "[Test 4] TCP connection & session field validation"
-info "Target:  ${BOUNDARY_TARGET_ID}"
-info "Address: ${BOUNDARY_ADDR}"
+echo "TCP connection & session field validation..."
 info "Establishing proxy connection..."
 echo ""
 
@@ -221,7 +211,7 @@ CONN_PROXY_PROTO=$(grep "Protocol:" "${CONN_OUT}" | awk '{print $NF}')
 CONN_PROXY_EXPIRY=$(grep "Expiration:" "${CONN_OUT}" | sed 's/.*Expiration:[[:space:]]*//')
 CONN_LIMIT=$(grep "Connection Limit:" "${CONN_OUT}" | awk '{print $NF}')
 
-echo "Session Details"
+echo "Session Details-"
 echo "Session ID:        ${CONN_SESSION_ID:-MISSING}"
 echo "Address:           ${CONN_PROXY_ADDR:-MISSING}"
 echo "Port:              ${CONN_PROXY_PORT:-MISSING}"
@@ -237,26 +227,21 @@ CONN_PASS=1
 [ -n "${CONN_PROXY_PROTO}" ] || CONN_PASS=0
 [ -n "${CONN_PROXY_EXPIRY}" ] || CONN_PASS=0
 [ -n "${CONN_LIMIT}" ] || CONN_PASS=0
-echo ""
 
 if [ -n "${CONN_SESSION_ID}" ]; then
-    info "Waiting 1 minute before cancelling session..."
-    sleep 60
+    info "Waiting 15 seconds before cancelling session..."
+    sleep 15
     info "Cancelling session ${CONN_SESSION_ID}..."
     boundary sessions cancel \
         -id "${CONN_SESSION_ID}" \
         -addr "${BOUNDARY_ADDR}" \
-        -token env://BOUNDARY_TOKEN 2>&1 || true
-    pass "Session cancelled"
+        -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    pass "Session cancelled Successfully"
+    echo ""
 fi
 kill "${CONN_PID}" 2>/dev/null || true
 wait "${CONN_PID}" 2>/dev/null || true
 rm -f "${CONN_OUT}"
 
 [ "${CONN_PASS}" -eq 1 ] || fail "One or more session fields were missing"
-pass "All session fields validated"
 echo ""
-
-echo "========================================"
-echo -e "${GREEN}✅ All Tests Passed${NC}"
-echo "========================================"
