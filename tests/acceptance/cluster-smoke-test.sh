@@ -12,10 +12,7 @@ NC='\033[0m' # No Color
 TEST_NAMESPACE="boundary-worker-test"
 CONTEXT="kind-acceptance"
 
-echo "================================"
 echo "Acceptance Test Suite"
-echo "================================"
-echo ""
 
 # Function to print test results
 print_result() {
@@ -88,12 +85,9 @@ echo ""
 # Cleanup
 echo "Cleaning up test namespace..."
 if kubectl delete namespace ${TEST_NAMESPACE} --context ${CONTEXT} --wait=false > /dev/null 2>&1; then
-    echo -e "${GREEN}✅${NC} Test namespace cleanup initiated"
+    echo "✅ Test Namespace Successfully Cleaned Up"
 else
     echo -e "${YELLOW}⚠️  WARNING:${NC} Failed to cleanup test namespace"
 fi
 echo ""
-
-echo "================================"
-echo -e "${GREEN}✅ All acceptance tests passed!${NC}"
-echo "================================"
+echo "✅ Cluster Smoke test passed!"
