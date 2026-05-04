@@ -72,24 +72,26 @@ Additional requirements for intermediate worker capabilities:
 
 Use this flow when you want to deploy a Boundary worker with this chart.
 
-### 1. Create the worker configuration file
+### 1. Add the worker configuration to your values file
 
-Start from the provided template and create a local worker config file:
+Put the Boundary worker HCL directly in `worker.config` inside your values file.
+
+Start from the provided template if you want a base to copy from:
 
 ```bash
 cp scripts/worker-template.hcl worker.hcl
 ```
 
-Edit `worker.hcl` so it matches your Boundary deployment model.
+Then paste the contents into `worker.config: |` in your values file and edit it so it matches your Boundary deployment model.
+
+Note: `--set-file worker.config=...` is still supported if you prefer to keep the HCL in a separate file, but this document uses the embedded-values approach as the primary workflow.
 
 At minimum, set:
 
-- Your activation token, worker-led registration settings, or KMS worker-auth configuration
-- Your `hcp_boundary_cluster_id` or other controller connection settings
+- Any of the three registration mechanisms: controller-led, worker-led , or KMS based registration
+- Your `hcp_boundary_cluster_id` or upstream endpoint using `initial_upstreams`
 - `public_addr` if the worker must be reachable from outside the cluster or by upstream workers
 - Storage paths that match the chart values if you override the defaults
-
-If you prefer not to use the template, you can write your own HCL file and pass it with `--set-file worker.config=...`.
 
 ### 2. Review chart values
 
@@ -113,6 +115,21 @@ Example:
 
 ```yaml
 worker:
+	config: |
+		disable_mlock = true
+
+		listener "tcp" {
+			address = "0.0.0.0:9202"
+			purpose = "proxy"
+		}
+
+		worker {
+			auth_storage_path = "/var/lib/boundary"
+			recording_storage_path = "/boundary/recording"
+			controller_generated_activation_token = "<activation-token>"
+		}
+
+		hcp_boundary_cluster_id = "<hcp-boundary-cluster-id>"
 	service:
 		proxy:
 			type: LoadBalancer
@@ -131,23 +148,22 @@ kubectl create namespace boundary
 
 ### 4. Install the chart
 
-Install with just the worker config file:
+Install using the default values in `values.yaml`. 
+Before running this command, replace any placeholders in `worker.config`.
 
 ```bash
 helm install boundary-worker . \
 	--namespace boundary \
-	--create-namespace \
-	--set-file worker.config=./worker.hcl
+	--create-namespace
 ```
 
-Install with an additional values file:
+Install with an additional values file containing your worker config and overrides:
 
 ```bash
 helm install boundary-worker . \
 	--namespace boundary \
 	--create-namespace \
-	-f my-values.yaml \
-	--set-file worker.config=./worker.hcl
+	-f my-values.yaml
 ```
 
 ### 5. Verify the deployment
@@ -176,13 +192,12 @@ Check the Service:
 kubectl get svc boundary-worker-proxy -n boundary
 ```
 
-If your `worker.hcl` needs to be updated with that final address, edit `public_addr` and upgrade the release:
+If your worker config needs to be updated with that final address, edit `worker.config` in your values file and upgrade the release:
 
 ```bash
 helm upgrade boundary-worker . \
 	--namespace boundary \
-	--reuse-values \
-	--set-file worker.config=./worker.hcl
+	-f my-values.yaml
 ```
 
 ## Configuration Model
@@ -200,6 +215,7 @@ Important characteristics:
 - The operator is responsible for keeping service ports, public addresses, and storage paths aligned with the worker config.
 - The config is rendered through Helm's `tpl` function, so Helm template expressions inside `worker.config` are evaluated.
 - At container startup, `${POD_NAME_LOWER}` is replaced with the pod name in lowercase before Boundary starts.
+- If preferred, `worker.config` can also be provided with `--set-file worker.config=<path-to-hcl>` instead of embedding the HCL in a values file.
 
 ### 2. Kubernetes infrastructure configuration
 
@@ -447,7 +463,7 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `image.tag` | `0.21-ent` | Image tag used by the worker container. |
 | `image.pullPolicy` | `IfNotPresent` | Kubernetes image pull policy. |
 | `imagePullSecrets` | `[]` | Optional registry credentials for private image pulls. |
-| `worker.config` | `""` | Raw HCL worker configuration passed through a ConfigMap. Usually set with `--set-file`. |
+| `worker.config` | Embedded HCL block | Raw HCL worker configuration passed through a ConfigMap. Set this directly in your values file. |
 | `worker.terminationGracePeriodSeconds` | `90` | Pod termination grace period in seconds. Increase this for long-lived sessions. |
 | `worker.service.proxy.enabled` | `true` | Whether to create the proxy Service. |
 | `worker.service.proxy.type` | `LoadBalancer` | Service type for proxy traffic. |
