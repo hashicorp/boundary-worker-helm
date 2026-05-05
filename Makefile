@@ -542,7 +542,7 @@ eks-setup:
 			exit 1; \
 		fi; \
 	done
-	@bash tests/acceptance/eks-cluster-setup.sh
+	@bash tests/integration/eks-cluster-setup.sh
 	@echo ""
 	@echo "✅ EKS cluster setup complete"
 	@echo ""
@@ -596,7 +596,7 @@ eks-test:
 			exit 1; \
 		fi; \
 	done
-	@bash tests/acceptance/eks-acceptance-test.sh
+	@bash tests/integration/eks-acceptance-test.sh
 	@echo ""
 
 eks-full:
