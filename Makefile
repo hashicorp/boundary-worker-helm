@@ -1,3 +1,10 @@
+# Auto-load .env if present (strips 'export ' prefix for Make compatibility)
+ifneq (,$(wildcard .env))
+  $(shell sed 's/^export //; /^[[:space:]]*#/d; /^$$/d' .env > .env.make)
+  include .env.make
+  export
+endif
+
 # ================================
 # PHONY Declarations
 # ================================
@@ -5,6 +12,7 @@
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
 .PHONY: acceptance-int-test acceptance-int-full acceptance-connect
+.PHONY: aks-setup aks-worker-config aks-helm aks-test aks-full aks-cleanup
 
 # ================================
 # Help Target
@@ -43,6 +51,14 @@ help:
 	@echo "  make acceptance-int-test   - Bring up worker, register with INT cluster, validate session"
 	@echo "  make acceptance-int-full   - Full INT workflow (setup + worker-config + helm + int-test)"
 	@echo "  make acceptance-connect    - Authenticate and open a proxy connection to the target (Ctrl+C to stop)"
+	@echo ""
+	@echo "Azure AKS Acceptance Testing targets:"
+	@echo "  make aks-setup             - Create AKS cluster + managed-csi StorageClass verification"
+	@echo "  make aks-worker-config     - Generate worker.hcl for AKS deployment"
+	@echo "  make aks-helm              - Install Helm chart with AKS values (managed-csi, Azure LB)"
+	@echo "  make aks-test              - Run full AKS acceptance test suite"
+	@echo "  make aks-full              - Full AKS workflow (aks-setup + worker-config + helm + test)"
+	@echo "  make aks-cleanup           - Uninstall Helm release from AKS (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "================================"
 
 # ================================
@@ -517,3 +533,130 @@ acceptance-cleanup:
 	fi
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
+
+# ================================
+# Azure AKS Acceptance Testing Targets
+# ================================
+
+aks-setup:
+	@echo "Setting Up Azure AKS Cluster..."
+	@echo ""
+	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME AZURE_LOCATION; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; \
+			echo "  export $$v=<value>"; \
+			exit 1; \
+		fi; \
+	done
+	@bash tests/acceptance/aks-cluster-setup.sh
+	@echo ""
+	@echo "✅ AKS cluster setup complete"
+	@echo ""
+
+aks-worker-config:
+	@echo "Generating Worker Config (AKS)..."
+	@echo ""
+	@$(MAKE) worker-config
+	@echo ""
+	@echo "✅ worker.hcl ready for AKS deployment"
+	@echo ""
+
+aks-helm:
+	@echo "Installing Helm Chart on AKS..."
+	@echo ""
+	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make aks-worker-config' first"; exit 1; }
+	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login'"; exit 1; }
+	@echo "Fetching credentials for cluster $${AKS_CLUSTER_NAME}..."
+	@az aks get-credentials \
+		--name "$${AKS_CLUSTER_NAME}" \
+		--resource-group "$${AZURE_RESOURCE_GROUP}" \
+		--overwrite-existing >/dev/null
+	@echo "Installing boundary-worker chart with AKS values..."
+	@helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${AKS_CLUSTER_NAME}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set worker.persistence.recording.storageClass=managed-csi \
+		--set worker.persistence.authStorage.storageClass=managed-csi \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--atomic
+	@echo ""
+	@echo "Deployed resources:"
+	@kubectl get all -n boundary --context "$${AKS_CLUSTER_NAME}"
+	@echo ""
+	@echo "✅ Helm chart installed on AKS"
+	@echo ""
+
+aks-test:
+	@echo "Running AKS Acceptance Tests..."
+	@echo ""
+	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD BOUNDARY_CLUSTER_ID; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set. Check your .env or export it."; \
+			exit 1; \
+		fi; \
+	done
+	@bash tests/acceptance/aks-acceptance-test.sh
+	@echo ""
+
+aks-full:
+	@echo "================================"
+	@echo "Full AKS Acceptance Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) aks-setup
+	@$(MAKE) aks-worker-config
+	@$(MAKE) aks-helm
+	@$(MAKE) aks-test
+	@echo ""
+	@echo "✅ End-to-end AKS workflow has been completed successfully"
+	@echo ""
+	@echo "To cleanup: make aks-cleanup"
+
+aks-cleanup:
+	@echo "================================"
+	@echo "Cleaning Up AKS Resources"
+	@echo "================================"
+	@echo ""
+	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login'"; exit 1; }
+	@az aks get-credentials \
+		--name "$${AKS_CLUSTER_NAME}" \
+		--resource-group "$${AZURE_RESOURCE_GROUP}" \
+		--overwrite-existing >/dev/null 2>/dev/null || true
+	@if helm status boundary-worker -n boundary --kube-context "$${AKS_CLUSTER_NAME}" >/dev/null 2>&1; then \
+		echo "Uninstalling Helm release boundary-worker..."; \
+		helm uninstall boundary-worker --namespace boundary \
+			--kube-context "$${AKS_CLUSTER_NAME}" --wait --timeout 5m; \
+		echo "✅ Helm release uninstalled"; \
+	else \
+		echo "⚠️  Helm release not found"; \
+	fi
+	@kubectl delete namespace boundary \
+		--context "$${AKS_CLUSTER_NAME}" \
+		--ignore-not-found 2>/dev/null || true
+	@rm -f worker.hcl
+	@echo "✅ Removed worker.hcl"
+	@if [ "$${DESTROY_CLUSTER:-false}" = "true" ]; then \
+		echo ""; \
+		echo "Deleting AKS cluster '$${AKS_CLUSTER_NAME}' (DESTROY_CLUSTER=true)..."; \
+		az aks delete \
+			--name "$${AKS_CLUSTER_NAME}" \
+			--resource-group "$${AZURE_RESOURCE_GROUP}" \
+			--yes --no-wait; \
+		echo "✅ AKS cluster deletion initiated"; \
+	else \
+		echo ""; \
+		echo "ℹ  AKS cluster retained. To delete: DESTROY_CLUSTER=true make aks-cleanup"; \
+	fi

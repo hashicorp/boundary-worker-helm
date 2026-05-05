@@ -68,7 +68,7 @@ Get proxy service annotations appropriate for the configured service type
 {{- if eq .Values.worker.service.proxy.type "LoadBalancer" -}}
 {{- toYaml $annotations -}}
 {{- else -}}
-{{- $filtered := omit $annotations "service.beta.kubernetes.io/aws-load-balancer-type" "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" "service.beta.kubernetes.io/aws-load-balancer-backend-protocol" "service.beta.kubernetes.io/aws-load-balancer-scheme" -}}
+{{- $filtered := omit $annotations "service.beta.kubernetes.io/aws-load-balancer-type" "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" "service.beta.kubernetes.io/aws-load-balancer-backend-protocol" "service.beta.kubernetes.io/aws-load-balancer-scheme" "service.beta.kubernetes.io/azure-load-balancer-resource-group" "service.beta.kubernetes.io/azure-load-balancer-internal" -}}
 {{- if $filtered -}}
 {{- toYaml $filtered -}}
 {{- end -}}
