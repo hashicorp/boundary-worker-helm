@@ -40,7 +40,7 @@ section() { echo ""; echo "$1"; }
 : "${AKS_CLUSTER_NAME:?'AKS_CLUSTER_NAME must be set'}"
 : "${AZURE_LOCATION:?'AZURE_LOCATION must be set (e.g. eastus)'}"
 
-K8S_VERSION="${AKS_K8S_VERSION:-1.31}"
+K8S_VERSION="${AKS_K8S_VERSION:-}"
 NODE_VM_SIZE="${AKS_NODE_VM_SIZE:-Standard_D2s_v3}"
 NODE_COUNT="${AKS_NODE_COUNT:-2}"
 NODE_MIN="${AKS_NODE_MIN:-1}"
@@ -96,11 +96,15 @@ if az aks show \
     warn "Cluster '${AKS_CLUSTER_NAME}' already exists — skipping creation"
 else
     info "Creating cluster (this takes ~5–10 minutes)..."
+    K8S_VERSION_ARGS=()
+    if [ -n "${K8S_VERSION}" ]; then
+        K8S_VERSION_ARGS=(--kubernetes-version "${K8S_VERSION}")
+    fi
     az aks create \
         --name "${AKS_CLUSTER_NAME}" \
         --resource-group "${AZURE_RESOURCE_GROUP}" \
         --location "${AZURE_LOCATION}" \
-        --kubernetes-version "${K8S_VERSION}" \
+        "${K8S_VERSION_ARGS[@]}" \
         --node-vm-size "${NODE_VM_SIZE}" \
         --node-count "${NODE_COUNT}" \
         --min-count "${NODE_MIN}" \
@@ -108,7 +112,6 @@ else
         --enable-cluster-autoscaler \
         --network-plugin azure \
         --generate-ssh-keys \
-        --enable-disk-driver \
         --output none
     pass "AKS cluster created"
 fi
