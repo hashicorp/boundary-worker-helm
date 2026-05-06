@@ -541,14 +541,15 @@ acceptance-cleanup:
 aks-setup:
 	@echo "Setting Up Azure AKS Cluster..."
 	@echo ""
-	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME AZURE_LOCATION; do \
+	@for v in AZURE_TENANT_ID AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME AZURE_LOCATION; do \
 		if [ -z "$${!v:-}" ]; then \
 			echo "❌ $$v is not set."; \
 			echo "  export $$v=<value>"; \
 			exit 1; \
 		fi; \
 	done
-	@bash tests/acceptance/aks-cluster-setup.sh
+	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login --tenant $${AZURE_TENANT_ID}'"; exit 1; }
+	@bash tests/integration/aks-cluster-setup.sh
 	@echo ""
 	@echo "✅ AKS cluster setup complete"
 	@echo ""
@@ -570,7 +571,7 @@ aks-helm:
 		fi; \
 	done
 	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make aks-worker-config' first"; exit 1; }
-	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login'"; exit 1; }
+	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login --tenant $${AZURE_TENANT_ID}'"; exit 1; }
 	@echo "Fetching credentials for cluster $${AKS_CLUSTER_NAME}..."
 	@az aks get-credentials \
 		--name "$${AKS_CLUSTER_NAME}" \
@@ -603,7 +604,7 @@ aks-test:
 			exit 1; \
 		fi; \
 	done
-	@bash tests/acceptance/aks-acceptance-test.sh
+	@bash tests/integration/aks-acceptance-test.sh
 	@echo ""
 
 aks-full:
@@ -630,7 +631,7 @@ aks-cleanup:
 			echo "❌ $$v is not set."; exit 1; \
 		fi; \
 	done
-	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login'"; exit 1; }
+	@az account show >/dev/null 2>&1 || { echo "❌ Azure credentials not configured. Run 'az login --tenant $${AZURE_TENANT_ID}'"; exit 1; }
 	@az aks get-credentials \
 		--name "$${AKS_CLUSTER_NAME}" \
 		--resource-group "$${AZURE_RESOURCE_GROUP}" \

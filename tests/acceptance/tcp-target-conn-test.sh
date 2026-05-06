@@ -12,7 +12,7 @@ set -euo pipefail
 pass() { echo "   ✅ $1"; }
 fail() { echo "❌ FAILED: $1"; exit 1; }
 info() { echo "   $1"; }
-warn() { echo "⚠️WARN: $1"; }
+warn() { echo "⚠️ WARN: $1"; }
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 CONTEXT="kind-acceptance"

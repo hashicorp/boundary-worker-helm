@@ -30,11 +30,10 @@
 set -euo pipefail
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-pass()    { echo "   ✅ $1"; }
-fail()    { echo "❌ FAILED: $1"; exit 1; }
-info()    { echo "   $1"; }
-warn()    { echo "⚠️WARN: $1"; }
-section() { echo ""; echo "$1"; }
+pass() { echo "   ✅ $1"; }
+fail() { echo "❌ FAILED: $1"; exit 1; }
+info() { echo "   $1"; }
+warn() { echo "⚠️ WARN: $1"; }
 
 # ── Config ────────────────────────────────────────────────────────────────────
 : "${AZURE_RESOURCE_GROUP:?'AZURE_RESOURCE_GROUP must be set'}"
@@ -78,15 +77,16 @@ _cleanup() {
         warn "SKIP_CLEANUP=true — leaving namespace '${NAMESPACE}' in place"
         return
     fi
-    section "Cleanup"
+    echo ""
+    echo "Cleanup"
     info "Uninstalling Helm release '${HELM_RELEASE}'..."
     helm uninstall "${HELM_RELEASE}" \
         --namespace "${NAMESPACE}" \
         --kube-context "${AKS_CONTEXT}" \
-        --wait --timeout 5m 2>/dev/null || true
+        --wait --timeout 5m 2>/dev/null | sed 's/^/   /' || true
     kubectl delete namespace "${NAMESPACE}" \
         --context "${AKS_CONTEXT}" \
-        --ignore-not-found 2>/dev/null || true
+        --ignore-not-found 2>/dev/null | sed 's/^/   /' || true
     info "Cleanup complete"
 }
 trap _cleanup EXIT
@@ -99,13 +99,9 @@ if [ -f .env ]; then
     set +o allexport
 fi
 
-echo "AKS Acceptance Test Suite — Boundary Worker Helm Chart"
+# ── Test 1: Prerequisites ───────────────────────────────────────────────────
 echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 1: Prerequisites
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 1: Prerequisites"
+echo "Prerequisites..."
 
 for tool in kubectl helm az boundary; do
     if command -v "$tool" >/dev/null 2>&1; then
@@ -116,10 +112,9 @@ for tool in kubectl helm az boundary; do
 done
 pass "Required env vars are set"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 2: AKS Cluster Accessibility
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 2: AKS Cluster Accessibility"
+# ── Test 2: AKS Cluster Accessibility ───────────────────────────────────────
+echo ""
+echo "AKS Cluster Accessibility..."
 
 info "Validating Azure credentials..."
 az account show >/dev/null 2>&1 \
@@ -148,10 +143,9 @@ READY_NODES=$(kubectl get nodes --context "${AKS_CONTEXT}" \
     && record_pass "All ${READY_NODES}/${NODE_COUNT} nodes are Ready" \
     || warn "${READY_NODES}/${NODE_COUNT} nodes are Ready"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 3: Azure Add-ons Present
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 3: Azure Add-ons"
+# ── Test 3: Azure Add-ons ───────────────────────────────────────────────────
+echo ""
+echo "Azure Add-ons..."
 
 # Azure Disk CSI Driver DaemonSet (csi-azuredisk-node)
 if kubectl get daemonset csi-azuredisk-node \
@@ -177,10 +171,9 @@ else
     fail "managed-csi StorageClass not found. Run 'make aks-setup' first."
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 4: Helm Chart Install
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 4: Helm Chart Install"
+# ── Test 4: Helm Chart Install ──────────────────────────────────────────────
+echo ""
+echo "Helm Chart Install..."
 
 if [[ "${SKIP_HELM_INSTALL}" != "true" ]]; then
     [ -f worker.hcl ] || fail "worker.hcl not found — run 'make aks-worker-config' first"
@@ -195,7 +188,7 @@ if [[ "${SKIP_HELM_INSTALL}" != "true" ]]; then
         --set worker.persistence.authStorage.storageClass=managed-csi \
         --set-file worker.config=worker.hcl \
         --wait \
-        --timeout "${HELM_TIMEOUT}"
+        --timeout "${HELM_TIMEOUT}" 2>&1 | awk '/^Release/{print "      "$0; next} {print "         "$0}'
 
     record_pass "Helm release '${HELM_RELEASE}' installed successfully"
 else
@@ -205,10 +198,9 @@ else
         || fail "Release '${HELM_RELEASE}' not found and SKIP_HELM_INSTALL=true"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 5: Deployment Readiness
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 5: Deployment Readiness"
+# ── Test 5: Deployment Readiness ────────────────────────────────────────────
+echo ""
+echo "Deployment Readiness..."
 
 info "Waiting for deployment '${DEPLOY}' (timeout: ${WAIT_TIMEOUT}s)..."
 kubectl wait --for=condition=available \
@@ -230,10 +222,9 @@ POD=$(kubectl get pods \
     && record_pass "Worker pod running: ${POD}" \
     || { record_fail "No running worker pod found"; exit 1; }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 6: PersistentVolumeClaims (managed-csi)
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 6: PersistentVolumeClaims"
+# ── Test 6: PersistentVolumeClaims (managed-csi) ────────────────────────────
+echo ""
+echo "PersistentVolumeClaims..."
 
 PVC_COUNT=$(kubectl get pvc -n "${NAMESPACE}" \
     --context "${AKS_CONTEXT}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -259,10 +250,9 @@ else
     warn "No PVCs found (persistence may be disabled)"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 7: Azure Load Balancer IP Provisioning
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 7: Azure Load Balancer IP Provisioning"
+# ── Test 7: Azure Load Balancer IP Provisioning ─────────────────────────────
+echo ""
+echo "Azure Load Balancer IP Provisioning..."
 
 info "Waiting for Azure Load Balancer IP to be assigned (timeout: ${LB_TIMEOUT}s)..."
 LB_IP=""
@@ -309,10 +299,9 @@ else
     kubectl get svc -n "${NAMESPACE}" --context "${AKS_CONTEXT}"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 8: Ops Health Endpoint
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 8: Ops Health Endpoint (port 9203)"
+# ── Test 8: Ops Health Endpoint (port 9203) ─────────────────────────────────
+echo ""
+echo "Ops Health Endpoint (port 9203)..."
 
 pkill -f "kubectl port-forward.*9203" 2>/dev/null || true
 sleep 1
@@ -335,10 +324,9 @@ ${HEALTH_OK} \
     && record_pass "Ops /health endpoint returned 200" \
     || record_fail "Ops /health endpoint did not return 200"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 9: Helm Chart Tests
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 9: Helm Chart Tests"
+# ── Test 9: Helm Chart Tests ────────────────────────────────────────────────
+echo ""
+echo "Helm Chart Tests..."
 
 info "Cleaning stale test pods..."
 kubectl delete pods \
@@ -352,7 +340,7 @@ info "Running: helm test ${HELM_RELEASE}..."
 helm test "${HELM_RELEASE}" \
     --namespace "${NAMESPACE}" \
     --kube-context "${AKS_CONTEXT}" \
-    --timeout 10m || true
+    --timeout 10m 2>&1 | awk '/^TEST SUITE:/{suite=$0} /^Phase:/{print "   " suite " → " $0}' || true
 
 FAILED_HELM_TESTS=$(kubectl get pods \
     -n "${NAMESPACE}" \
@@ -368,10 +356,9 @@ else
     record_fail "Helm tests failed: $(echo "${FAILED_HELM_TESTS}" | tr '\n' ' ')"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 10: Boundary Worker Registration
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 10: Boundary Worker Registration"
+# ── Test 10: Boundary Worker Registration ───────────────────────────────────
+echo ""
+echo "Boundary Worker Registration..."
 
 info "Authenticating with Boundary cluster: ${BOUNDARY_ADDR}"
 AUTH_OUT=$(boundary authenticate password \
@@ -426,10 +413,9 @@ if kubectl logs "${POD}" \
     record_pass "Worker is attempting upstream connection to Boundary cluster"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 11: TCP Session (optional — requires BOUNDARY_TARGET_ID)
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 11: TCP Session Validation"
+# ── Test 11: TCP Session Validation (optional) ──────────────────────────────
+echo ""
+echo "TCP Session Validation..."
 
 if [ -z "${BOUNDARY_TARGET_ID:-}" ]; then
     warn "BOUNDARY_TARGET_ID not set — skipping TCP session test"
@@ -481,24 +467,22 @@ else
     rm -f "${CONN_OUT}"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Results Summary
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test Results"
-
+# ── Results Summary ─────────────────────────────────────────────────────────
 echo ""
-echo "AKS Cluster:    ${AKS_CLUSTER_NAME} (${AZURE_RESOURCE_GROUP})"
-echo "Helm Release:   ${HELM_RELEASE} / ${NAMESPACE}"
-echo "Worker Pod:     ${POD:-unknown}"
-[ -n "${LB_IP:-}" ] && echo "Load Balancer:  ${LB_IP}"
+echo "Test Results"
 echo ""
-echo "Tests Passed: ${TESTS_PASSED}"
+echo "   AKS Cluster:    ${AKS_CLUSTER_NAME} (${AZURE_RESOURCE_GROUP})"
+echo "   Helm Release:   ${HELM_RELEASE} / ${NAMESPACE}"
+echo "   Worker Pod:     ${POD:-unknown}"
+[ -n "${LB_IP:-}" ] && echo "   Load Balancer:  ${LB_IP}"
+echo ""
+echo "   Tests Passed: ${TESTS_PASSED}"
 if [ "${TESTS_FAILED}" -gt 0 ]; then
-    echo "Tests Failed: ${TESTS_FAILED}"
+    echo "   Tests Failed: ${TESTS_FAILED}"
     echo ""
-    echo "Failed tests:"
+    echo "   Failed tests:"
     for t in "${FAILED_TESTS[@]}"; do
-        echo "  ✗ ${t}"
+        echo "     ✗ ${t}"
     done
     echo ""
     exit 1

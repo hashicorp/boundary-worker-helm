@@ -29,11 +29,10 @@
 set -euo pipefail
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-pass()    { echo "   ✅ $1"; }
-fail()    { echo "❌ FAILED: $1"; exit 1; }
-info()    { echo "   $1"; }
-warn()    { echo "⚠️ WARN: $1"; }
-section() { echo ""; echo "$1"; }
+pass() { echo "   ✅ $1"; }
+fail() { echo "❌ FAILED: $1"; exit 1; }
+info() { echo "   $1"; }
+warn() { echo "⚠️ WARN: $1"; }
 
 # ── Config ────────────────────────────────────────────────────────────────────
 : "${AZURE_RESOURCE_GROUP:?'AZURE_RESOURCE_GROUP must be set'}"
@@ -47,7 +46,8 @@ NODE_MIN="${AKS_NODE_MIN:-1}"
 NODE_MAX="${AKS_NODE_MAX:-3}"
 
 # ── 1. Prerequisites ──────────────────────────────────────────────────────────
-section "Checking Prerequisites"
+echo ""
+echo "Checking Prerequisites..."
 
 for tool in az kubectl helm; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -73,7 +73,8 @@ fi
 pass "Azure credentials valid — subscription: ${AZURE_SUBSCRIPTION_ID}, tenant: ${AZURE_TENANT_ID}"
 
 # ── 2. Resource Group ─────────────────────────────────────────────────────────
-section "Preparing Resource Group: ${AZURE_RESOURCE_GROUP}"
+echo ""
+echo "Preparing Resource Group: ${AZURE_RESOURCE_GROUP}..."
 
 if az group show --name "${AZURE_RESOURCE_GROUP}" >/dev/null 2>&1; then
     warn "Resource group '${AZURE_RESOURCE_GROUP}' already exists — skipping creation"
@@ -87,7 +88,8 @@ else
 fi
 
 # ── 3. Create AKS Cluster ─────────────────────────────────────────────────────
-section "Creating AKS Cluster: ${AKS_CLUSTER_NAME}"
+echo ""
+echo "Creating AKS Cluster: ${AKS_CLUSTER_NAME}..."
 
 if az aks show \
         --name "${AKS_CLUSTER_NAME}" \
@@ -117,7 +119,8 @@ else
 fi
 
 # ── 4. Get Credentials ────────────────────────────────────────────────────────
-section "Configuring kubectl Credentials"
+echo ""
+echo "Configuring kubectl Credentials..."
 
 info "Fetching AKS credentials (overwrites any existing context for '${AKS_CLUSTER_NAME}')..."
 az aks get-credentials \
@@ -133,7 +136,8 @@ kubectl cluster-info --context "${AKS_CONTEXT}" >/dev/null 2>&1 \
 pass "Cluster is accessible (context: ${AKS_CONTEXT})"
 
 # ── 5. Verify Nodes ───────────────────────────────────────────────────────────
-section "Verifying Cluster Nodes"
+echo ""
+echo "Verifying Cluster Nodes..."
 
 info "Waiting for nodes to be Ready..."
 TIMEOUT=180
@@ -160,7 +164,8 @@ READY_COUNT=$(kubectl get nodes --context "${AKS_CONTEXT}" \
     || fail "No nodes became Ready within ${TIMEOUT}s"
 
 # ── 6. Azure Disk CSI Driver ──────────────────────────────────────────────────
-section "Verifying Azure Disk CSI Driver"
+echo ""
+echo "Verifying Azure Disk CSI Driver..."
 
 # AKS 1.21+ enables the Azure Disk CSI driver by default.
 # Confirm the driver DaemonSet is running.
@@ -178,7 +183,8 @@ else
 fi
 
 # ── 7. managed-csi StorageClass ───────────────────────────────────────────────
-section "Verifying managed-csi StorageClass"
+echo ""
+echo "Verifying managed-csi StorageClass..."
 
 if kubectl get storageclass managed-csi \
         --context "${AKS_CONTEXT}" >/dev/null 2>&1; then
@@ -202,7 +208,8 @@ EOF
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
-section "AKS Cluster Setup Complete"
+echo ""
+echo "AKS Cluster Setup Complete... "
 
 echo ""
 echo "Cluster:        ${AKS_CLUSTER_NAME}"

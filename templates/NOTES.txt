@@ -1,19 +1,19 @@
 Boundary Worker Chart has been installed successfully!
 
-Boundary Worker:
-- Deployment: {{ include "boundary.worker.deploymentName" . }}
-- Proxy Service: {{ include "boundary.worker.proxy.serviceName" . }}
-- Ops Service: {{ include "boundary.worker.ops.serviceName" . }}
+  Boundary Worker:
+    - Deployment:    {{ include "boundary.worker.deploymentName" . }}
+    - Proxy Service: {{ include "boundary.worker.proxy.serviceName" . }}
+    - Ops Service:   {{ include "boundary.worker.ops.serviceName" . }}
 
-To complete the setup:
+  To complete the setup:
 
-1. Wait for LoadBalancer service to get external address:
-   kubectl get svc {{ include "boundary.worker.proxy.serviceName" . }} -n {{ .Release.Namespace }}
+    1. Wait for LoadBalancer service to get external address:
+       kubectl get svc {{ include "boundary.worker.proxy.serviceName" . }} -n {{ .Release.Namespace }}
 
-2. Once LoadBalancer is assigned, update the worker config with the public address:
-   helm upgrade {{ .Release.Name }} . \
-     --namespace {{ .Release.Namespace }} \
-     --reuse-values \
-     --set-file worker.config="<path/to/worker.hcl>"
+    2. Once LoadBalancer is assigned, update the worker config with the public address:
+       helm upgrade {{ .Release.Name }} . \
+         --namespace {{ .Release.Namespace }} \
+         --reuse-values \
+         --set-file worker.config="<path/to/worker.hcl>"
 
-For more information, visit https://github.com/hashicorp/boundary-worker-helm
+  For more information, visit https://github.com/hashicorp/boundary-worker-helm
