@@ -13,7 +13,6 @@
 #   BOUNDARY_AUTH_METHOD_ID - Auth method ID (ampw_...)
 #   BOUNDARY_LOGIN_NAME     - Login name for authentication
 #   BOUNDARY_PASSWORD       - Login password
-#   BOUNDARY_CLUSTER_ID     - HCP Boundary cluster ID
 #
 # Optional env vars:
 #   BOUNDARY_TARGET_ID      - Target ID to validate TCP session (skipped if unset)
@@ -33,7 +32,7 @@ set -euo pipefail
 pass() { echo "   ✅ $1"; }
 fail() { echo "❌ FAILED: $1"; exit 1; }
 info() { echo "   $1"; }
-warn() { echo "⚠️WARN: $1"; }
+warn() { echo "⚠️ WARN: $1"; }
 section() {
     echo ""
     echo "$1"
@@ -46,7 +45,6 @@ section() {
 : "${BOUNDARY_AUTH_METHOD_ID:?'BOUNDARY_AUTH_METHOD_ID must be set'}"
 : "${BOUNDARY_LOGIN_NAME:?'BOUNDARY_LOGIN_NAME must be set'}"
 : "${BOUNDARY_PASSWORD:?'BOUNDARY_PASSWORD must be set'}"
-: "${BOUNDARY_CLUSTER_ID:?'BOUNDARY_CLUSTER_ID must be set'}"
 
 SKIP_HELM_INSTALL="${SKIP_HELM_INSTALL:-false}"
 SKIP_CLEANUP="${SKIP_CLEANUP:-false}"
@@ -70,6 +68,7 @@ record_fail() {
 }
 
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
+EKS_CONTEXT="" # initialised here; set to full ARN after AWS_ACCOUNT_ID is resolved
 _cleanup() {
     # Kill any background port-forward processes
     pkill -f "kubectl port-forward.*9203" 2>/dev/null || true
@@ -181,6 +180,7 @@ if [[ "${SKIP_HELM_INSTALL}" != "true" ]]; then
         --set worker.persistence.recording.storageClass=gp2 \
         --set worker.persistence.authStorage.storageClass=gp2 \
         --set-file worker.config=worker.hcl \
+        --atomic \
         --wait \
         --timeout "${HELM_TIMEOUT}"
 
@@ -298,12 +298,16 @@ kubectl port-forward \
     --context "${EKS_CONTEXT}" \
     "pod/${POD}" 9203:9203 >/dev/null 2>&1 &
 PF_PID=$!
-sleep 3
 
+# Poll until the port-forward is ready (max 15s)
 HEALTH_OK=false
-if curl -sf --max-time 5 http://localhost:9203/health >/dev/null 2>&1; then
-    HEALTH_OK=true
-fi
+for _i in $(seq 1 15); do
+    if curl -sf --max-time 1 http://localhost:9203/health >/dev/null 2>&1; then
+        HEALTH_OK=true
+        break
+    fi
+    sleep 1
+done
 kill "${PF_PID}" 2>/dev/null || true
 wait "${PF_PID}" 2>/dev/null || true
 

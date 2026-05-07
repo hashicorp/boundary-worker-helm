@@ -21,6 +21,7 @@
 #   EKS_NODE_COUNT     - Desired node count  (default: 2)
 #   EKS_NODE_MIN       - Minimum node count  (default: 1)
 #   EKS_NODE_MAX       - Maximum node count  (default: 3)
+#   LBC_VERSION        - AWS Load Balancer Controller version (default: v2.9.0)
 # ============================================================================
 
 set -euo pipefail
@@ -44,6 +45,7 @@ NODE_TYPE="${EKS_NODE_TYPE:-t3.medium}"
 NODE_COUNT="${EKS_NODE_COUNT:-2}"
 NODE_MIN="${EKS_NODE_MIN:-1}"
 NODE_MAX="${EKS_NODE_MAX:-3}"
+LBC_VERSION="${LBC_VERSION:-v2.9.0}"
 
 # ── 1. Prerequisites ──────────────────────────────────────────────────────────
 section "Checking Prerequisites"
@@ -55,11 +57,9 @@ for tool in aws eksctl kubectl helm; do
     info "$tool: $(command -v "$tool")"
 done
 
-# Validate AWS credentials
-aws sts get-caller-identity >/dev/null 2>&1 \
+# Validate AWS credentials and capture account ID in one call
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
     || fail "AWS credentials are not configured. Run 'aws configure' or set AWS_PROFILE."
-
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 pass "AWS credentials valid — account: ${AWS_ACCOUNT_ID}, region: ${AWS_REGION}"
 
 # ── 2. Create EKS Cluster ─────────────────────────────────────────────────────
@@ -191,15 +191,16 @@ if aws iam get-policy \
         >/dev/null 2>&1; then
     warn "LBC IAM policy already exists — skipping creation"
 else
-    info "Downloading LBC IAM policy document..."
+    info "Downloading LBC IAM policy document (${LBC_VERSION})..."
     curl -fsSLo /tmp/lbc-iam-policy.json \
-        "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.9.0/docs/install/iam_policy.json"
+        "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${LBC_VERSION}/docs/install/iam_policy.json"
 
     aws iam create-policy \
         --policy-name "${LBC_POLICY_NAME}" \
         --policy-document file:///tmp/lbc-iam-policy.json \
         --region "${AWS_REGION}" \
         --output text --query 'Policy.Arn' >/dev/null
+    rm -f /tmp/lbc-iam-policy.json
     pass "LBC IAM policy created"
 fi
 
@@ -231,13 +232,14 @@ VPC_ID=$(aws eks describe-cluster \
     --region "${AWS_REGION}" \
     --query "cluster.resourcesVpcConfig.vpcId" \
     --output text)
+[ -n "${VPC_ID}" ] || fail "Failed to retrieve VPC ID for cluster '${EKS_CLUSTER_NAME}'"
 
 if helm status aws-load-balancer-controller -n kube-system \
         --kube-context "${EKS_CONTEXT}" >/dev/null 2>&1; then
     warn "AWS Load Balancer Controller already installed — skipping"
 else
     info "Installing AWS Load Balancer Controller..."
-    helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+    helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
         --namespace kube-system \
         --kube-context "${EKS_CONTEXT}" \
         --set clusterName="${EKS_CLUSTER_NAME}" \

@@ -590,7 +590,7 @@ eks-helm:
 eks-test:
 	@echo "Running EKS Acceptance Tests..."
 	@echo ""
-	@for v in AWS_REGION EKS_CLUSTER_NAME BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD BOUNDARY_CLUSTER_ID; do \
+	@for v in AWS_REGION EKS_CLUSTER_NAME BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do \
 		if [ -z "$${!v:-}" ]; then \
 			echo "❌ $$v is not set. Check your .env or export it."; \
 			exit 1; \
@@ -607,7 +607,7 @@ eks-full:
 	@$(MAKE) eks-setup
 	@$(MAKE) eks-worker-config
 	@$(MAKE) eks-helm
-	@$(MAKE) eks-test
+	@SKIP_HELM_INSTALL=true $(MAKE) eks-test
 	@echo ""
 	@echo "✅ End-to-end EKS workflow has been completed successfully"
 	@echo ""
