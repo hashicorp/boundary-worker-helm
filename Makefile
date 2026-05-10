@@ -12,6 +12,7 @@ endif
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
 .PHONY: eks-setup eks-worker-config eks-helm eks-test eks-full eks-cleanup
+.PHONY: tf-setup tf-destroy tf-output tf-plan
 
 # ================================
 # Help Target
@@ -46,13 +47,19 @@ help:
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
 	@echo ""
-	@echo "AWS EKS Acceptance Testing targets:"
+	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Create EKS cluster + EBS CSI + AWS Load Balancer Controller"
 	@echo "  make eks-worker-config     - Generate worker.hcl for EKS deployment"
 	@echo "  make eks-helm              - Install Helm chart with EKS values (gp2, NLB)"
 	@echo "  make eks-test              - Run full EKS acceptance test suite"
 	@echo "  make eks-full              - Full EKS workflow (eks-setup + worker-config + helm + test)"
 	@echo "  make eks-cleanup           - Uninstall Helm release from EKS (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo ""
+	@echo "Terraform EKS targets (recommended):"
+	@echo "  make tf-setup              - terraform init + apply (VPC + EKS + EBS CSI + LBC)"
+	@echo "  make tf-plan               - terraform plan (preview changes without applying)"
+	@echo "  make tf-destroy            - terraform destroy (tear down ALL AWS resources cleanly)"
+	@echo "  make tf-output             - Show terraform outputs (cluster name, kubeconfig cmd, etc.)"
 	@echo "================================"
 
 # ================================
@@ -646,3 +653,60 @@ eks-cleanup:
 		echo ""; \
 		echo "ℹ  EKS cluster retained. To delete: DESTROY_CLUSTER=true make eks-cleanup"; \
 	fi
+
+# ================================
+# Terraform EKS Targets (Recommended)
+# ================================
+
+tf-plan:
+	@echo "================================"
+	@echo "Terraform Plan (EKS)"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@cd terraform && \
+		terraform init -upgrade && \
+		terraform plan \
+			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
+
+tf-setup:
+	@echo "================================"
+	@echo "Provisioning EKS with Terraform"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@cd terraform && \
+		terraform init -upgrade && \
+		terraform apply -auto-approve \
+			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
+	@echo ""
+	@KUBECONFIG_CMD=$$(cd terraform && terraform output -raw kubeconfig_command 2>/dev/null); \
+	if [ -n "$$KUBECONFIG_CMD" ]; then \
+		echo "Updating kubeconfig..."; \
+		eval "$$KUBECONFIG_CMD"; \
+	fi
+	@echo ""
+	@echo "✅ EKS cluster and all prerequisites are ready"
+	@echo ""
+	@cd terraform && terraform output next_steps
+
+tf-output:
+	@echo "================================"
+	@echo "Terraform Outputs"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd terraform && terraform output
+
+tf-destroy:
+	@echo "================================"
+	@echo "Destroying EKS Terraform Stack"
+	@echo "================================"
+	@echo "⚠️  This will delete the EKS cluster, VPC, node groups, IAM roles, and all associated resources."
+	@echo ""
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd terraform && \
+		terraform destroy -auto-approve \
+			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
+	@echo ""
+	@echo "✅ All EKS resources have been destroyed"
