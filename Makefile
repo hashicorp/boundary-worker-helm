@@ -663,7 +663,7 @@ tf-plan:
 	@echo "Terraform Plan (EKS)"
 	@echo "================================"
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
-	@cd terraform && \
+	@cd tests/integration/terraform/aws && \
 		terraform init -upgrade && \
 		terraform plan \
 			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
@@ -674,13 +674,13 @@ tf-setup:
 	@echo "Provisioning EKS with Terraform"
 	@echo "================================"
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
-	@cd terraform && \
+	@cd tests/integration/terraform/aws && \
 		terraform init -upgrade && \
 		terraform apply -auto-approve \
 			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
 			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
 	@echo ""
-	@KUBECONFIG_CMD=$$(cd terraform && terraform output -raw kubeconfig_command 2>/dev/null); \
+	@KUBECONFIG_CMD=$$(cd tests/integration/terraform/aws && terraform output -raw kubeconfig_command 2>/dev/null); \
 	if [ -n "$$KUBECONFIG_CMD" ]; then \
 		echo "Updating kubeconfig..."; \
 		eval "$$KUBECONFIG_CMD"; \
@@ -688,14 +688,14 @@ tf-setup:
 	@echo ""
 	@echo "✅ EKS cluster and all prerequisites are ready"
 	@echo ""
-	@cd terraform && terraform output next_steps
+	@cd tests/integration/terraform/aws && terraform output next_steps
 
 tf-output:
 	@echo "================================"
 	@echo "Terraform Outputs"
 	@echo "================================"
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
-	@cd terraform && terraform output
+	@cd tests/integration/terraform/aws && terraform output
 
 tf-destroy:
 	@echo "================================"
@@ -704,7 +704,7 @@ tf-destroy:
 	@echo "⚠️  This will delete the EKS cluster, VPC, node groups, IAM roles, and all associated resources."
 	@echo ""
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
-	@cd terraform && \
+	@cd tests/integration/terraform/aws && \
 		terraform destroy -auto-approve \
 			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
 			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
