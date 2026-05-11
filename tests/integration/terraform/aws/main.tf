@@ -52,7 +52,7 @@ module "eks" {
   cluster_version = var.k8s_version
 
   vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnet_ids
+  subnet_ids = module.vpc.private_subnets
 
   # Public endpoint is required to run kubectl and helm from a workstation or CI.
   # Restrict access in production using cluster_endpoint_public_access_cidrs.

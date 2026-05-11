@@ -43,22 +43,3 @@ output "eks_context" {
   value       = "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${module.eks.cluster_name}"
 }
 
-output "next_steps" {
-  description = "Commands to run after terraform apply"
-  value       = <<-EOT
-    # 1. Update kubeconfig
-    aws eks update-kubeconfig --name ${module.eks.cluster_name} --region ${var.aws_region}
-
-    # 2. Generate worker config
-    make eks-worker-config
-
-    # 3. Deploy boundary-worker Helm chart
-    make eks-helm
-
-    # 4. Run acceptance tests
-    make eks-test
-
-    # 5. Destroy all resources when done
-    make tf-destroy
-  EOT
-}

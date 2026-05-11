@@ -9,3 +9,10 @@ kubescape-output.json
 worker.hcl
 .env
 .env.make
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan

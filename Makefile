@@ -11,7 +11,7 @@ endif
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
-.PHONY: eks-setup eks-worker-config eks-helm eks-test eks-full eks-cleanup
+.PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 
 # ================================
@@ -48,8 +48,7 @@ help:
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
-	@echo "  make eks-setup             - Create EKS cluster + EBS CSI + AWS Load Balancer Controller"
-	@echo "  make eks-worker-config     - Generate worker.hcl for EKS deployment"
+	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
 	@echo "  make eks-helm              - Install Helm chart with EKS values (gp2, NLB)"
 	@echo "  make eks-test              - Run full EKS acceptance test suite"
 	@echo "  make eks-full              - Full EKS workflow (eks-setup + worker-config + helm + test)"
@@ -540,27 +539,7 @@ acceptance-cleanup:
 # ================================
 
 eks-setup:
-	@echo "Setting Up AWS EKS Cluster..."
-	@echo ""
-	@for v in AWS_REGION EKS_CLUSTER_NAME; do \
-		if [ -z "$${!v:-}" ]; then \
-			echo "❌ $$v is not set."; \
-			echo "  export $$v=<value>"; \
-			exit 1; \
-		fi; \
-	done
-	@bash tests/integration/eks-cluster-setup.sh
-	@echo ""
-	@echo "✅ EKS cluster setup complete"
-	@echo ""
-
-eks-worker-config:
-	@echo "Generating Worker Config (EKS)..."
-	@echo ""
-	@$(MAKE) worker-config
-	@echo ""
-	@echo "✅ worker.hcl ready for EKS deployment"
-	@echo ""
+	@$(MAKE) tf-setup
 
 eks-helm:
 	@echo "Installing Helm Chart on EKS..."
@@ -570,23 +549,27 @@ eks-helm:
 			echo "❌ $$v is not set."; exit 1; \
 		fi; \
 	done
-	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make eks-worker-config' first"; exit 1; }
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
 	@AWS_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || \
 		{ echo "❌ AWS credentials not configured"; exit 1; }; \
 	EKS_CONTEXT="arn:aws:eks:$${AWS_REGION}:$${AWS_ACCOUNT_ID}:cluster/$${EKS_CLUSTER_NAME}"; \
 	echo "Updating kubeconfig for cluster $${EKS_CLUSTER_NAME}..."; \
 	aws eks update-kubeconfig --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}"; \
-	echo "Installing boundary-worker chart with EKS values..."; \
-	helm upgrade --install boundary-worker . \
-		--namespace boundary \
-		--create-namespace \
-		--kube-context "$${EKS_CONTEXT}" \
-		--set worker.service.proxy.type=LoadBalancer \
-		--set worker.persistence.recording.storageClass=gp2 \
-		--set worker.persistence.authStorage.storageClass=gp2 \
-		--set-file worker.config=worker.hcl \
-		--timeout 10m \
-		--atomic; \
+	if helm status boundary-worker -n boundary --kube-context "$${EKS_CONTEXT}" >/dev/null 2>&1; then \
+		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make eks-cleanup' first to reinstall."; \
+	else \
+		echo "Installing boundary-worker chart with EKS values..."; \
+		helm install boundary-worker . \
+			--namespace boundary \
+			--create-namespace \
+			--kube-context "$${EKS_CONTEXT}" \
+			--set worker.service.proxy.type=LoadBalancer \
+			--set worker.persistence.recording.storageClass=gp2 \
+			--set worker.persistence.authStorage.storageClass=gp2 \
+			--set-file worker.config=worker.hcl \
+			--timeout 10m \
+			--rollback-on-failure; \
+	fi; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${EKS_CONTEXT}"
@@ -603,18 +586,18 @@ eks-test:
 			exit 1; \
 		fi; \
 	done
-	@bash tests/integration/eks-acceptance-test.sh
+	@SKIP_HELM_INSTALL=true bash tests/integration/eks-integration-test.sh
 	@echo ""
 
 eks-full:
 	@echo "================================"
-	@echo "Full EKS Acceptance Workflow"
+	@echo "Full EKS Integration Workflow"
 	@echo "================================"
 	@echo ""
-	@$(MAKE) eks-setup
-	@$(MAKE) eks-worker-config
+	@$(MAKE) tf-setup
+	@$(MAKE) worker-config
 	@$(MAKE) eks-helm
-	@SKIP_HELM_INSTALL=true $(MAKE) eks-test
+	@$(MAKE) eks-test
 	@echo ""
 	@echo "✅ End-to-end EKS workflow has been completed successfully"
 	@echo ""
@@ -646,12 +629,11 @@ eks-cleanup:
 	@echo "✅ Removed worker.hcl"
 	@if [ "$${DESTROY_CLUSTER:-false}" = "true" ]; then \
 		echo ""; \
-		echo "Deleting EKS cluster '$${EKS_CLUSTER_NAME}' (DESTROY_CLUSTER=true)..."; \
-		eksctl delete cluster --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}"; \
-		echo "✅ EKS cluster deleted"; \
+		echo "Destroying Terraform EKS stack (DESTROY_CLUSTER=true)..."; \
+		$(MAKE) tf-destroy; \
 	else \
 		echo ""; \
-		echo "ℹ  EKS cluster retained. To delete: DESTROY_CLUSTER=true make eks-cleanup"; \
+		echo "ℹ  EKS cluster retained. To destroy: DESTROY_CLUSTER=true make eks-cleanup"; \
 	fi
 
 # ================================
@@ -678,6 +660,23 @@ tf-setup:
 		terraform init -upgrade && \
 		terraform apply -auto-approve \
 			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-target=module.vpc \
+			-target=module.eks \
+			-target=module.ebs_csi_irsa_role \
+			-target=module.lbc_irsa_role
+	@echo "   Importing existing gp2 StorageClass into Terraform state (if present)..."
+	@cd tests/integration/terraform/aws && \
+		terraform import \
+			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			kubernetes_storage_class_v1.gp2 gp2 2>/dev/null || true
+	@echo "   Removing stale outputs from Terraform state (if any)..."
+	@cd tests/integration/terraform/aws && \
+		terraform state rm output.next_steps 2>/dev/null || true
+	@cd tests/integration/terraform/aws && \
+		terraform apply -auto-approve \
+			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
 			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
 	@echo ""
 	@KUBECONFIG_CMD=$$(cd tests/integration/terraform/aws && terraform output -raw kubeconfig_command 2>/dev/null); \
@@ -688,7 +687,6 @@ tf-setup:
 	@echo ""
 	@echo "✅ EKS cluster and all prerequisites are ready"
 	@echo ""
-	@cd tests/integration/terraform/aws && terraform output next_steps
 
 tf-output:
 	@echo "================================"

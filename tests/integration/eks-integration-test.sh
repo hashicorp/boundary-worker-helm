@@ -1,10 +1,10 @@
 #!/bin/bash
 # ============================================================================
-# EKS Acceptance Test — Boundary Worker Helm Chart
+# EKS Integration Test — Boundary Worker Helm Chart
 #
 # Validates that the Boundary Worker Helm chart is correctly installed and
-# functioning on an AWS EKS cluster. Mirrors the KIND acceptance workflow
-# but with EKS-specific validations (NLB, gp2 PVCs, IAM, etc.).
+# functioning on an AWS EKS cluster. The chart must be pre-installed via
+# 'make eks-helm' before running this script.
 #
 # Required env vars:
 #   AWS_REGION              - AWS region (e.g. us-east-1)
@@ -16,12 +16,10 @@
 #
 # Optional env vars:
 #   BOUNDARY_TARGET_ID      - Target ID to validate TCP session (skipped if unset)
-#   SKIP_HELM_INSTALL       - Set to "true" to skip Helm install (reuse deployed chart)
 #   SKIP_CLEANUP            - Set to "true" to leave resources after test
 #   HELM_RELEASE            - Helm release name (default: boundary-worker)
 #   K8S_NAMESPACE           - Kubernetes namespace  (default: boundary)
 #   WORKER_DEPLOY           - Deployment name       (default: boundary-worker-deployment)
-#   HELM_TIMEOUT            - Helm install timeout  (default: 10m)
 #   WAIT_TIMEOUT            - Readiness wait (sec)  (default: 300)
 #   NLB_TIMEOUT             - NLB provisioning wait (sec) (default: 300)
 # ============================================================================
@@ -29,13 +27,14 @@
 set -euo pipefail
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-pass() { echo "   ✅ $1"; }
-fail() { echo "❌ FAILED: $1"; exit 1; }
-info() { echo "   $1"; }
-warn() { echo "⚠️ WARN: $1"; }
+pass()    { echo "     ✅ $1"; }
+fail()    { echo "  ❌ FAILED: $1"; exit 1; }
+info()    { echo "     ℹ  $1"; }
+warn()    { echo "     ⚠️  $1"; }
 section() {
     echo ""
-    echo "$1"
+    echo "  ▶ $1"
+    echo "  $(printf '─%.0s' {1..50})"
 }
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -46,12 +45,10 @@ section() {
 : "${BOUNDARY_LOGIN_NAME:?'BOUNDARY_LOGIN_NAME must be set'}"
 : "${BOUNDARY_PASSWORD:?'BOUNDARY_PASSWORD must be set'}"
 
-SKIP_HELM_INSTALL="${SKIP_HELM_INSTALL:-false}"
 SKIP_CLEANUP="${SKIP_CLEANUP:-false}"
 HELM_RELEASE="${HELM_RELEASE:-boundary-worker}"
 NAMESPACE="${K8S_NAMESPACE:-boundary}"
 DEPLOY="${WORKER_DEPLOY:-boundary-worker-deployment}"
-HELM_TIMEOUT="${HELM_TIMEOUT:-10m}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 NLB_TIMEOUT="${NLB_TIMEOUT:-300}"
 
@@ -64,7 +61,7 @@ record_pass() { TESTS_PASSED=$((TESTS_PASSED + 1)); pass "$1"; }
 record_fail() {
     TESTS_FAILED=$((TESTS_FAILED + 1))
     FAILED_TESTS+=("$1")
-    echo "❌ FAILED: $1"
+    echo "     ❌ FAILED: $1"
 }
 
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
@@ -82,10 +79,12 @@ _cleanup() {
     helm uninstall "${HELM_RELEASE}" \
         --namespace "${NAMESPACE}" \
         --kube-context "${EKS_CONTEXT}" \
-        --wait --timeout 5m 2>/dev/null || true
+        --wait --timeout 5m 2>/dev/null \
+        | sed 's/^/     /' || true
     kubectl delete namespace "${NAMESPACE}" \
         --context "${EKS_CONTEXT}" \
-        --ignore-not-found 2>/dev/null || true
+        --ignore-not-found 2>/dev/null \
+        | sed 's/^/     /' || true
     info "Cleanup complete"
 }
 trap _cleanup EXIT
@@ -95,10 +94,9 @@ AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/de
     || fail "AWS credentials are not configured. Run 'aws configure' or set AWS_PROFILE."
 EKS_CONTEXT="arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 1: Prerequisites
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 1: Prerequisites"
+
+# Prerequisites
+section "Prerequisites..."
 
 for tool in kubectl helm aws boundary; do
     if command -v "$tool" >/dev/null 2>&1; then
@@ -109,10 +107,8 @@ for tool in kubectl helm aws boundary; do
 done
 pass "Required env vars are set"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 2: EKS Cluster Accessibility
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 2: EKS Cluster Accessibility"
+# EKS Cluster Accessibility
+section "EKS Cluster Accessibility..."
 
 info "Updating kubeconfig for cluster '${EKS_CLUSTER_NAME}'..."
 aws eks update-kubeconfig \
@@ -135,11 +131,9 @@ READY_NODES=$(kubectl get nodes --context "${EKS_CONTEXT}" \
     && record_pass "All ${READY_NODES}/${NODE_COUNT} nodes are Ready" \
     || warn "${READY_NODES}/${NODE_COUNT} nodes are Ready"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 3: Required Add-ons Present
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 3: AWS Add-ons"
 
+# Required Add-ons Present
+section "AWS Add-ons..."
 # EBS CSI Driver
 if kubectl get deployment ebs-csi-controller \
         -n kube-system --context "${EKS_CONTEXT}" >/dev/null 2>&1; then
@@ -163,39 +157,14 @@ else
     fail "gp2 StorageClass not found. Run 'make eks-setup' first."
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 4: Helm Chart Install
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 4: Helm Chart Install"
+# Verify Helm release is present (installed by make eks-helm)
+helm status "${HELM_RELEASE}" -n "${NAMESPACE}" \
+    --kube-context "${EKS_CONTEXT}" >/dev/null 2>&1 \
+    || fail "Release '${HELM_RELEASE}' not found. Run 'make eks-helm' first."
 
-if [[ "${SKIP_HELM_INSTALL}" != "true" ]]; then
-    [ -f worker.hcl ] || fail "worker.hcl not found — run 'make eks-worker-config' first"
 
-    info "Installing Helm chart '${HELM_RELEASE}' in namespace '${NAMESPACE}'..."
-    helm upgrade --install "${HELM_RELEASE}" . \
-        --namespace "${NAMESPACE}" \
-        --create-namespace \
-        --kube-context "${EKS_CONTEXT}" \
-        --set worker.service.proxy.type=LoadBalancer \
-        --set worker.persistence.recording.storageClass=gp2 \
-        --set worker.persistence.authStorage.storageClass=gp2 \
-        --set-file worker.config=worker.hcl \
-        --atomic \
-        --wait \
-        --timeout "${HELM_TIMEOUT}"
-
-    record_pass "Helm release '${HELM_RELEASE}' installed successfully"
-else
-    warn "SKIP_HELM_INSTALL=true — skipping Helm install"
-    helm status "${HELM_RELEASE}" -n "${NAMESPACE}" \
-        --kube-context "${EKS_CONTEXT}" >/dev/null 2>&1 \
-        || fail "Release '${HELM_RELEASE}' not found and SKIP_HELM_INSTALL=true"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 5: Deployment Readiness
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 5: Deployment Readiness"
+# Deployment Readiness
+section "Deployment Readiness..."
 
 info "Waiting for deployment '${DEPLOY}' (timeout: ${WAIT_TIMEOUT}s)..."
 kubectl wait --for=condition=available \
@@ -217,10 +186,9 @@ POD=$(kubectl get pods \
     && record_pass "Worker pod running: ${POD}" \
     || { record_fail "No running worker pod found"; exit 1; }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 6: PersistentVolumeClaims (gp2)
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 6: PersistentVolumeClaims"
+
+# PersistentVolumeClaims (gp2)
+section "PersistentVolumeClaims..."
 
 PVC_COUNT=$(kubectl get pvc -n "${NAMESPACE}" \
     --context "${EKS_CONTEXT}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -246,10 +214,9 @@ else
     warn "No PVCs found (persistence may be disabled)"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 7: NLB Service Provisioning
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 7: NLB Service Provisioning"
+
+# NLB Service Provisioning
+section "NLB Service Provisioning..."
 
 info "Waiting for NLB hostname to be assigned (timeout: ${NLB_TIMEOUT}s)..."
 NLB_HOSTNAME=""
@@ -285,10 +252,9 @@ else
     kubectl get svc -n "${NAMESPACE}" --context "${EKS_CONTEXT}"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 8: Ops Health Endpoint
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 8: Ops Health Endpoint (port 9203)"
+
+# Ops Health Endpoint
+section "Ops Health Endpoint (port 9203)..."
 
 pkill -f "kubectl port-forward.*9203" 2>/dev/null || true
 sleep 1
@@ -315,10 +281,8 @@ ${HEALTH_OK} \
     && record_pass "Ops /health endpoint returned 200" \
     || record_fail "Ops /health endpoint did not return 200"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 9: Helm Chart Tests
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 9: Helm Chart Tests"
+# Helm Chart Tests
+section "Helm Chart Tests..."
 
 info "Cleaning stale test pods..."
 kubectl delete pods \
@@ -326,13 +290,15 @@ kubectl delete pods \
     --context "${EKS_CONTEXT}" \
     -l app.kubernetes.io/component=test \
     --field-selector=status.phase=Failed \
-    --ignore-not-found 2>/dev/null || true
+    --ignore-not-found 2>/dev/null \
+    | sed 's/^/     /' || true
 
 info "Running: helm test ${HELM_RELEASE}..."
 helm test "${HELM_RELEASE}" \
     --namespace "${NAMESPACE}" \
     --kube-context "${EKS_CONTEXT}" \
-    --timeout 10m || true
+    --timeout 10m \
+    | sed 's/^/     /' || true
 
 FAILED_HELM_TESTS=$(kubectl get pods \
     -n "${NAMESPACE}" \
@@ -348,10 +314,8 @@ else
     record_fail "Helm tests failed: $(echo "${FAILED_HELM_TESTS}" | tr '\n' ' ')"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 10: Boundary Worker Registration
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 10: Boundary Worker Registration"
+# Boundary Worker Registration
+section "Boundary Worker Registration..."
 
 info "Authenticating with Boundary cluster: ${BOUNDARY_ADDR}"
 AUTH_OUT=$(boundary authenticate password \
@@ -406,10 +370,8 @@ if kubectl logs "${POD}" \
     record_pass "Worker is attempting upstream connection to Boundary cluster"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test 11: TCP Session (optional — requires BOUNDARY_TARGET_ID)
-# ─────────────────────────────────────────────────────────────────────────────
-section "Test 11: TCP Session Validation"
+# TCP Session (optional — requires BOUNDARY_TARGET_ID)
+section "TCP Session Validation..."
 
 if [ -z "${BOUNDARY_TARGET_ID:-}" ]; then
     warn "BOUNDARY_TARGET_ID not set — skipping TCP session test"
@@ -461,28 +423,26 @@ else
     rm -f "${CONN_OUT}"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Results Summary
-# ─────────────────────────────────────────────────────────────────────────────
 section "Test Results"
 
 echo ""
-echo "EKS Cluster:   ${EKS_CLUSTER_NAME} (${AWS_REGION})"
-echo "Helm Release:  ${HELM_RELEASE} / ${NAMESPACE}"
-echo "Worker Pod:    ${POD:-unknown}"
-[ -n "${NLB_HOSTNAME:-}" ] && echo "NLB Hostname:  ${NLB_HOSTNAME}"
+echo "  EKS Cluster:   ${EKS_CLUSTER_NAME} (${AWS_REGION})"
+echo "  Helm Release:  ${HELM_RELEASE} / ${NAMESPACE}"
+echo "  Worker Pod:    ${POD:-unknown}"
+[ -n "${NLB_HOSTNAME:-}" ] && echo "  NLB Hostname:  ${NLB_HOSTNAME}"
 echo ""
-echo "Tests Passed: ${TESTS_PASSED}"
+echo "  Tests Passed: ${TESTS_PASSED}"
 if [ "${TESTS_FAILED}" -gt 0 ]; then
-    echo "Tests Failed: ${TESTS_FAILED}"
+    echo "  Tests Failed: ${TESTS_FAILED}"
     echo ""
-    echo "Failed tests:"
+    echo "  Failed tests:"
     for t in "${FAILED_TESTS[@]}"; do
-        echo "  ✗ ${t}"
+        echo "     ✗ ${t}"
     done
     echo ""
     exit 1
 else
     echo ""
-    echo "✅ All EKS acceptance tests passed!"
+    echo "  ✅ All EKS integration tests passed!"
 fi
