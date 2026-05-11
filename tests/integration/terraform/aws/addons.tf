@@ -1,5 +1,5 @@
 # ── Amazon EBS CSI Driver addon ───────────────────────────────────────────────
-# Enables dynamic provisioning of gp2 EBS volumes for PersistentVolumeClaims.
+# Enables dynamic provisioning of gp3 EBS volumes for PersistentVolumeClaims.
 resource "aws_eks_addon" "ebs_csi" {
   cluster_name             = module.eks.cluster_name
   addon_name               = "aws-ebs-csi-driver"
@@ -13,13 +13,13 @@ resource "aws_eks_addon" "ebs_csi" {
   depends_on = [module.eks]
 }
 
-# ── gp2 StorageClass ──────────────────────────────────────────────────────────
+# ── gp3 StorageClass ──────────────────────────────────────────────────────────
 # Mirrors what eks-cluster-setup.sh creates manually.
 # WaitForFirstConsumer prevents volumes from being provisioned before the pod
 # is scheduled (avoids AZ mismatch issues).
-resource "kubernetes_storage_class_v1" "gp2" {
+resource "kubernetes_storage_class_v1" "gp3" {
   metadata {
-    name = "gp2"
+    name = "gp3"
     annotations = {
       "storageclass.kubernetes.io/is-default-class" = "true"
     }
@@ -30,7 +30,7 @@ resource "kubernetes_storage_class_v1" "gp2" {
   allow_volume_expansion = true
 
   parameters = {
-    type      = "gp2"
+    type      = "gp3"
     encrypted = "true"
   }
 
@@ -46,8 +46,10 @@ resource "helm_release" "aws_load_balancer_controller" {
   version    = var.lbc_chart_version
   namespace  = "kube-system"
 
-  # Reuse the service account created by the IRSA module (serviceAccount.create=false
-  # so Helm does not overwrite the IRSA annotation set by Terraform).
+  # Let Helm create the ServiceAccount (serviceAccount.create=true) so that the
+  # IRSA role-arn annotation is applied to it in the same operation. The IRSA
+  # module only creates the IAM role/policy; it does not create the Kubernetes
+  # ServiceAccount itself, so Helm must own that resource.
   set {
     name  = "clusterName"
     value = module.eks.cluster_name

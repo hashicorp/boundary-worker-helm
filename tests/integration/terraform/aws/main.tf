@@ -55,8 +55,11 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   # Public endpoint is required to run kubectl and helm from a workstation or CI.
-  # Restrict access in production using cluster_endpoint_public_access_cidrs.
-  cluster_endpoint_public_access = true
+  # Restrict to specific CIDRs in production (e.g. your office/VPN egress IP).
+  # Defaults to ["0.0.0.0/0"] which keeps the current open behaviour; override
+  # via the allowed_public_access_cidrs variable or a tfvars file.
+  cluster_endpoint_public_access       = true
+  cluster_endpoint_public_access_cidrs = var.allowed_public_access_cidrs
 
   # Enables the IAM OIDC identity provider — required for IRSA (pod-level IAM).
   enable_irsa = true

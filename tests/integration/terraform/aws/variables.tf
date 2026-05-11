@@ -51,3 +51,15 @@ variable "lbc_chart_version" {
   type        = string
   default     = "1.8.1"
 }
+
+variable "allowed_public_access_cidrs" {
+  description = <<-EOT
+    CIDRs allowed to reach the EKS public API endpoint.
+    Defaults to ["0.0.0.0/0"] so any workstation or CI runner can call kubectl
+    without extra configuration. For production, restrict this to your office
+    egress IP, VPN CIDR, or GitHub Actions IP ranges.
+    Example: ["203.0.113.0/24", "198.51.100.42/32"]
+  EOT
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}

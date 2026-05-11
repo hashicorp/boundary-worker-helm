@@ -15,4 +15,5 @@ worker.hcl
 .terraform.lock.hcl
 *.tfstate
 *.tfstate.backup
+*.tfstate.*.backup
 *.tfplan

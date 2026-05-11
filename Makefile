@@ -49,7 +49,7 @@ help:
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
-	@echo "  make eks-helm              - Install Helm chart with EKS values (gp2, NLB)"
+	@echo "  make eks-helm              - Install Helm chart with EKS values (gp3, NLB)"
 	@echo "  make eks-test              - Run full EKS acceptance test suite"
 	@echo "  make eks-full              - Full EKS workflow (eks-setup + worker-config + helm + test)"
 	@echo "  make eks-cleanup           - Uninstall Helm release from EKS (set DESTROY_CLUSTER=true to delete cluster)"
@@ -564,8 +564,8 @@ eks-helm:
 			--create-namespace \
 			--kube-context "$${EKS_CONTEXT}" \
 			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=gp2 \
-			--set worker.persistence.authStorage.storageClass=gp2 \
+			--set worker.persistence.recording.storageClass=gp3 \
+			--set worker.persistence.authStorage.storageClass=gp3 \
 			--set-file worker.config=worker.hcl \
 			--timeout 10m \
 			--rollback-on-failure; \
@@ -586,7 +586,7 @@ eks-test:
 			exit 1; \
 		fi; \
 	done
-	@SKIP_HELM_INSTALL=true bash tests/integration/eks-integration-test.sh
+	@bash tests/integration/eks-integration-test.sh
 	@echo ""
 
 eks-full:
@@ -648,8 +648,15 @@ tf-plan:
 	@cd tests/integration/terraform/aws && \
 		terraform init -upgrade && \
 		terraform plan \
-			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
-			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]"
 
 tf-setup:
 	@echo "================================"
@@ -659,25 +666,39 @@ tf-setup:
 	@cd tests/integration/terraform/aws && \
 		terraform init -upgrade && \
 		terraform apply -auto-approve \
-			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="aws_region=$${AWS_REGION}" \
 			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]" \
 			-target=module.vpc \
 			-target=module.eks \
 			-target=module.ebs_csi_irsa_role \
 			-target=module.lbc_irsa_role
-	@echo "   Importing existing gp2 StorageClass into Terraform state (if present)..."
+	@echo "   Importing existing gp3 StorageClass into Terraform state (if present)..."
 	@cd tests/integration/terraform/aws && \
 		terraform import \
-			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
+			-var="aws_region=$${AWS_REGION}" \
 			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
-			kubernetes_storage_class_v1.gp2 gp2 2>/dev/null || true
+			kubernetes_storage_class_v1.gp3 gp3 2>/dev/null || true
 	@echo "   Removing stale outputs from Terraform state (if any)..."
 	@cd tests/integration/terraform/aws && \
 		terraform state rm output.next_steps 2>/dev/null || true
 	@cd tests/integration/terraform/aws && \
 		terraform apply -auto-approve \
-			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
-			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]"
 	@echo ""
 	@KUBECONFIG_CMD=$$(cd tests/integration/terraform/aws && terraform output -raw kubeconfig_command 2>/dev/null); \
 	if [ -n "$$KUBECONFIG_CMD" ]; then \
@@ -704,7 +725,14 @@ tf-destroy:
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
 	@cd tests/integration/terraform/aws && \
 		terraform destroy -auto-approve \
-			-var="aws_region=$${AWS_REGION:-ap-south-1}" \
-			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]"
 	@echo ""
 	@echo "✅ All EKS resources have been destroyed"

@@ -150,11 +150,11 @@ else
     warn "AWS Load Balancer Controller not found — run 'make eks-setup' first"
 fi
 
-# gp2 StorageClass
-if kubectl get storageclass gp2 --context "${EKS_CONTEXT}" >/dev/null 2>&1; then
-    record_pass "gp2 StorageClass is available"
+# gp3 StorageClass
+if kubectl get storageclass gp3 --context "${EKS_CONTEXT}" >/dev/null 2>&1; then
+    record_pass "gp3 StorageClass is available"
 else
-    fail "gp2 StorageClass not found. Run 'make eks-setup' first."
+    fail "gp3 StorageClass not found. Run 'make eks-setup' first."
 fi
 
 # Verify Helm release is present (installed by make eks-helm)
@@ -187,7 +187,7 @@ POD=$(kubectl get pods \
     || { record_fail "No running worker pod found"; exit 1; }
 
 
-# PersistentVolumeClaims (gp2)
+# PersistentVolumeClaims (gp3)
 section "PersistentVolumeClaims..."
 
 PVC_COUNT=$(kubectl get pvc -n "${NAMESPACE}" \
@@ -202,14 +202,14 @@ if [ "${PVC_COUNT}" -gt 0 ]; then
         && record_pass "All PVCs are Bound" \
         || { record_fail "${UNBOUND} PVC(s) are not Bound"; kubectl get pvc -n "${NAMESPACE}" --context "${EKS_CONTEXT}"; }
 
-    # Verify gp2 storage class is used
-    GP2_PVCS=$(kubectl get pvc -n "${NAMESPACE}" \
+    # Verify gp3 storage class is used
+    GP3_PVCS=$(kubectl get pvc -n "${NAMESPACE}" \
         --context "${EKS_CONTEXT}" \
         -o jsonpath='{range .items[*]}{.spec.storageClassName}{"\n"}{end}' 2>/dev/null \
-        | grep -c "^gp2$" || true)
-    [ "${GP2_PVCS}" -gt 0 ] \
-        && record_pass "${GP2_PVCS} PVC(s) use gp2 storage class" \
-        || warn "No PVCs found using gp2 — check storageClass configuration"
+        | grep -c "^gp3$" || true)
+    [ "${GP3_PVCS}" -gt 0 ] \
+        && record_pass "${GP3_PVCS} PVC(s) use gp3 storage class" \
+        || warn "No PVCs found using gp3 — check storageClass configuration"
 else
     warn "No PVCs found (persistence may be disabled)"
 fi
@@ -305,11 +305,10 @@ FAILED_HELM_TESTS=$(kubectl get pods \
     --context "${EKS_CONTEXT}" \
     -l app.kubernetes.io/component=test \
     --field-selector=status.phase=Failed \
-    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-    | grep -v "controller-connection" || true)
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
 
 if [ -z "${FAILED_HELM_TESTS}" ]; then
-    record_pass "All Helm tests passed (controller-connection excluded)"
+    record_pass "All Helm tests passed"
 else
     record_fail "Helm tests failed: $(echo "${FAILED_HELM_TESTS}" | tr '\n' ' ')"
 fi

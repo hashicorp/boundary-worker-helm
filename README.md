@@ -107,7 +107,7 @@ Check `values.yaml` before installing, especially:
 - `worker.persistence.recording.storageClass`
 - `worker.resources`
 
-The defaults use `gp2` for storage classes. Change that if your cluster does not provide `gp2`.
+The defaults use `gp3` for storage classes. Change that if your cluster does not provide `gp3`.
 
 If you want overrides, create a separate values file such as `my-values.yaml`.
 
@@ -482,12 +482,12 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `worker.persistence.authStorage.enabled` | `true` | Whether to create the auth storage PVC. Set to `false` when using KMS auth, which does not require persistent auth storage. |
 | `worker.persistence.authStorage.size` | `1Gi` | Size of the auth storage PVC. |
 | `worker.persistence.authStorage.accessMode` | `ReadWriteOnce` | Access mode for the auth storage PVC. |
-| `worker.persistence.authStorage.storageClass` | `gp2` | StorageClass for the auth storage PVC. |
+| `worker.persistence.authStorage.storageClass` | `gp3` | StorageClass for the auth storage PVC. |
 | `worker.persistence.authStorage.path` | `/var/lib/boundary` | Mount path for auth storage. Must match `auth_storage_path` in the HCL. |
 | `worker.persistence.recording.enabled` | `true` | Whether to create a recording PVC and mount it into the worker pod. |
 | `worker.persistence.recording.size` | `10Gi` | Size of the recording PVC. |
 | `worker.persistence.recording.accessMode` | `ReadWriteOnce` | Access mode for the recording PVC. |
-| `worker.persistence.recording.storageClass` | `gp2` | StorageClass for the recording PVC. |
+| `worker.persistence.recording.storageClass` | `gp3` | StorageClass for the recording PVC. |
 | `worker.persistence.recording.path` | `/boundary/recording` | Mount path for recording storage. Must match `recording_storage_path` in the HCL when recording is enabled. |
 | `podSecurityContext` | secure non-root defaults | Pod-level security context. |
 | `containerSecurityContext` | secure non-root defaults | Container-level security context with dropped Linux capabilities and read-only root filesystem. |
