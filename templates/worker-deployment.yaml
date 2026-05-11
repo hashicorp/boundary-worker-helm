@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 # Boundary Worker Deployment
 apiVersion: apps/v1
 kind: Deployment

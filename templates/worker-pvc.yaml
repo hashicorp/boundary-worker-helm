@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 {{- if .Values.worker.persistence.recording.enabled }}
 # Boundary Worker Recording PVC
 apiVersion: v1
