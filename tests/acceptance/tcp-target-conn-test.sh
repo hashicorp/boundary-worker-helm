@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright IBM Corp. 2026
+
 # TCP Target Connection Test
 # Scenarios:
 #   1. Worker running in KIND cluster

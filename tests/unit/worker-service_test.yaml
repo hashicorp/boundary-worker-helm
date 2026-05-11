@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 suite: Test Worker Service Configuration
 templates:
   - worker-service.yaml

@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 # Default values for Boundary Worker Helm Chart
 
 # Boundary image configuration

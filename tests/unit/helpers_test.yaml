@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 suite: Test Helper Templates
 templates:
   - worker-deployment.yaml

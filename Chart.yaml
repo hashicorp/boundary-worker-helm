@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 apiVersion: v2
 name: boundary-worker
 description: A Helm chart for HashiCorp Boundary Worker deployment

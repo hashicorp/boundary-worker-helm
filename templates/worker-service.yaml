@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 {{- if .Values.worker.service.proxy.enabled }}
 # Boundary Worker Proxy Service
 apiVersion: v1
