@@ -64,12 +64,12 @@ spec:
           livenessProbe:
             tcpSocket:
               port: proxy
-            initialDelaySeconds: 60
+            initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             tcpSocket:
               port: proxy
-            initialDelaySeconds: 60
+            initialDelaySeconds: 10
             periodSeconds: 10
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}

@@ -5,7 +5,7 @@
 # Boundary image configuration
 image:
   repository: hashicorp/boundary-enterprise
-  tag: "0.21-ent"
+  tag: ""  # Defaults to Chart.appVersion (eg 0.21-ent) when empty
   pullPolicy: IfNotPresent
 
 # Worker configuration
@@ -28,13 +28,15 @@ worker:
       auth_storage_path = "/var/lib/boundary"
       recording_storage_path = "/boundary/recording"
       tags {
-        type = ["worker", "egress", "tests"]
+        type = ["worker", "egress"]
       }
 
-      controller_generated_activation_token = "<activation-token>"
+      # REQUIRED: Set your controller-generated activation token
+      # controller_generated_activation_token = "your-activation-token-here"
     }
 
-    hcp_boundary_cluster_id = "84bac8e2-5385-4b91-a056-1f45913dce6b"
+    # REQUIRED: Set your HCP Boundary cluster ID or use initial_upstreams for self-managed
+    # hcp_boundary_cluster_id = "your-cluster-id-here"
 
     events {
       audit_enabled       = true
@@ -47,7 +49,7 @@ worker:
         format = "cloudevents-json"
       }
     }
-  terminationGracePeriodSeconds: 7200
+  terminationGracePeriodSeconds: 7200  # 2 hours: allows active sessions to drain naturally before pod termination
   service:
     proxy:
       enabled: true
@@ -77,13 +79,13 @@ worker:
       enabled: true
       size: "10Gi"
       accessMode: ReadWriteOnce
-      storageClass: "gp3"
+      storageClass: ""  # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/boundary/recording"
     authStorage:
       enabled: true
       size: "1Gi"
       accessMode: ReadWriteOnce
-      storageClass: "gp3"
+      storageClass: ""  # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/var/lib/boundary"
 
 # Pod security context

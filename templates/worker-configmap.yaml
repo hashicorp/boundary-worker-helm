@@ -12,5 +12,5 @@ metadata:
 data:
   boundary-worker.hcl: |
 {{- if .Values.worker.config }}
-{{ tpl .Values.worker.config . | indent 4 }}
+{{ tpl (.Values.worker.config | toString) . | indent 4 }}
 {{- end }}
