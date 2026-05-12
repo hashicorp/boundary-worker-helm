@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 # ── IRSA: Amazon EBS CSI Driver ───────────────────────────────────────────────
 # Gives the ebs-csi-controller-sa service account permission to manage EBS volumes.
 # The module attaches AWS-managed policy AmazonEBSCSIDriverPolicy automatically.

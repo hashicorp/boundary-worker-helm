@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 # ── Amazon EBS CSI Driver addon ───────────────────────────────────────────────
 # Enables dynamic provisioning of gp3 EBS volumes for PersistentVolumeClaims.
 resource "aws_eks_addon" "ebs_csi" {

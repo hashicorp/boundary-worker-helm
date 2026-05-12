@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright IBM Corp. 2026
 # ============================================================================
 # EKS Integration Test — Boundary Worker Helm Chart
 #

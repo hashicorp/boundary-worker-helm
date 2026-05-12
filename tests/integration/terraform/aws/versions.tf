@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 terraform {
   required_version = ">= 1.5"
 

@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string

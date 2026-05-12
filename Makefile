@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 # Auto-load .env if present (strips 'export ' prefix for Make compatibility)
 ifneq (,$(wildcard .env))
   $(shell sed 's/^export //; /^[[:space:]]*#/d; /^$$/d' .env > .env.make)

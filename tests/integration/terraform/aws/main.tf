@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 locals {
   tags = {
     Project     = "boundary-worker"
