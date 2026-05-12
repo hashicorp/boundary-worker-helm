@@ -77,13 +77,13 @@ worker:
       enabled: true
       size: "10Gi"
       accessMode: ReadWriteOnce
-      storageClass: "gp2"
+      storageClass: "gp3"
       path: "/boundary/recording"
     authStorage:
       enabled: true
       size: "1Gi"
       accessMode: ReadWriteOnce
-      storageClass: "gp2"
+      storageClass: "gp3"
       path: "/var/lib/boundary"
 
 # Pod security context

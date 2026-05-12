@@ -17,5 +17,8 @@
 Makefile
 kubescape-exceptions.json
 scripts/
-tests/acceptance/
-example-config/
+tests/
+worker.hcl
+.env
+.terraform/
+.terraform.lock.hcl

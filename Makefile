@@ -1,10 +1,20 @@
+# Copyright IBM Corp. 2026
+
+# Auto-load .env if present (strips 'export ' prefix for Make compatibility)
+ifneq (,$(wildcard .env))
+  $(shell sed 's/^export //; /^[[:space:]]*#/d; /^$$/d' .env > .env.make)
+  include .env.make
+  export
+endif
+
 # ================================
 # PHONY Declarations
 # ================================
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
-.PHONY: acceptance-int-test acceptance-int-full acceptance-connect
+.PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
+.PHONY: tf-setup tf-destroy tf-output tf-plan
 
 # ================================
 # Help Target
@@ -39,10 +49,18 @@ help:
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
 	@echo ""
-	@echo "INT Acceptance Testing targets:"
-	@echo "  make acceptance-int-test   - Bring up worker, register with INT cluster, validate session"
-	@echo "  make acceptance-int-full   - Full INT workflow (setup + worker-config + helm + int-test)"
-	@echo "  make acceptance-connect    - Authenticate and open a proxy connection to the target (Ctrl+C to stop)"
+	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
+	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
+	@echo "  make eks-helm              - Install Helm chart with EKS values (gp3, NLB)"
+	@echo "  make eks-test              - Run full EKS acceptance test suite"
+	@echo "  make eks-full              - Full EKS workflow (eks-setup + worker-config + helm + test)"
+	@echo "  make eks-cleanup           - Uninstall Helm release from EKS (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo ""
+	@echo "Terraform EKS targets (recommended):"
+	@echo "  make tf-setup              - terraform init + apply (VPC + EKS + EBS CSI + LBC)"
+	@echo "  make tf-plan               - terraform plan (preview changes without applying)"
+	@echo "  make tf-destroy            - terraform destroy (tear down ALL AWS resources cleanly)"
+	@echo "  make tf-output             - Show terraform outputs (cluster name, kubeconfig cmd, etc.)"
 	@echo "================================"
 
 # ================================
@@ -517,3 +535,206 @@ acceptance-cleanup:
 	fi
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
+
+# ================================
+# AWS EKS Acceptance Testing Targets
+# ================================
+
+eks-setup:
+	@$(MAKE) tf-setup
+
+eks-helm:
+	@echo "Installing Helm Chart on EKS..."
+	@echo ""
+	@for v in AWS_REGION EKS_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@AWS_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || \
+		{ echo "❌ AWS credentials not configured"; exit 1; }; \
+	EKS_CONTEXT="arn:aws:eks:$${AWS_REGION}:$${AWS_ACCOUNT_ID}:cluster/$${EKS_CLUSTER_NAME}"; \
+	echo "Updating kubeconfig for cluster $${EKS_CLUSTER_NAME}..."; \
+	aws eks update-kubeconfig --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}"; \
+	if helm status boundary-worker -n boundary --kube-context "$${EKS_CONTEXT}" >/dev/null 2>&1; then \
+		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make eks-cleanup' first to reinstall."; \
+	else \
+		echo "Installing boundary-worker chart with EKS values..."; \
+		helm install boundary-worker . \
+			--namespace boundary \
+			--create-namespace \
+			--kube-context "$${EKS_CONTEXT}" \
+			--set worker.service.proxy.type=LoadBalancer \
+			--set worker.persistence.recording.storageClass=gp3 \
+			--set worker.persistence.authStorage.storageClass=gp3 \
+			--set-file worker.config=worker.hcl \
+			--timeout 10m \
+			--rollback-on-failure; \
+	fi; \
+	echo ""; \
+	echo "Deployed resources:"; \
+	kubectl get all -n boundary --context "$${EKS_CONTEXT}"
+	@echo ""
+	@echo "✅ Helm chart installed on EKS"
+	@echo ""
+
+eks-test:
+	@echo "Running EKS Acceptance Tests..."
+	@echo ""
+	@for v in AWS_REGION EKS_CLUSTER_NAME BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set. Check your .env or export it."; \
+			exit 1; \
+		fi; \
+	done
+	@bash tests/integration/eks-integration-test.sh
+	@echo ""
+
+eks-full:
+	@echo "================================"
+	@echo "Full EKS Integration Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) tf-setup
+	@$(MAKE) worker-config
+	@$(MAKE) eks-helm
+	@$(MAKE) eks-test
+	@echo ""
+	@echo "✅ End-to-end EKS workflow has been completed successfully"
+	@echo ""
+	@echo "To cleanup: make eks-cleanup"
+
+eks-cleanup:
+	@echo "================================"
+	@echo "Cleaning Up EKS Resources"
+	@echo "================================"
+	@echo ""
+	@for v in AWS_REGION EKS_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@AWS_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || \
+		{ echo "❌ AWS credentials not configured"; exit 1; }; \
+	EKS_CONTEXT="arn:aws:eks:$${AWS_REGION}:$${AWS_ACCOUNT_ID}:cluster/$${EKS_CLUSTER_NAME}"; \
+	aws eks update-kubeconfig --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}" 2>/dev/null || true; \
+	if helm status boundary-worker -n boundary --kube-context "$${EKS_CONTEXT}" >/dev/null 2>&1; then \
+		echo "Uninstalling Helm release boundary-worker..."; \
+		helm uninstall boundary-worker --namespace boundary --kube-context "$${EKS_CONTEXT}" --wait --timeout 5m; \
+		echo "✅ Helm release uninstalled"; \
+	else \
+		echo "⚠️  Helm release not found"; \
+	fi; \
+	kubectl delete namespace boundary --context "$${EKS_CONTEXT}" --ignore-not-found 2>/dev/null || true
+	@rm -f worker.hcl
+	@echo "✅ Removed worker.hcl"
+	@if [ "$${DESTROY_CLUSTER:-false}" = "true" ]; then \
+		echo ""; \
+		echo "Destroying Terraform EKS stack (DESTROY_CLUSTER=true)..."; \
+		$(MAKE) tf-destroy; \
+	else \
+		echo ""; \
+		echo "ℹ  EKS cluster retained. To destroy: DESTROY_CLUSTER=true make eks-cleanup"; \
+	fi
+
+# ================================
+# Terraform EKS Targets (Recommended)
+# ================================
+
+tf-plan:
+	@echo "================================"
+	@echo "Terraform Plan (EKS)"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@cd tests/integration/terraform/aws && \
+		terraform init -upgrade && \
+		terraform plan \
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]"
+
+tf-setup:
+	@echo "================================"
+	@echo "Provisioning EKS with Terraform"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@cd tests/integration/terraform/aws && \
+		terraform init -upgrade && \
+		terraform apply -auto-approve \
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]" \
+			-target=module.vpc \
+			-target=module.eks \
+			-target=module.ebs_csi_irsa_role \
+			-target=module.lbc_irsa_role
+	@echo "   Importing existing gp3 StorageClass into Terraform state (if present)..."
+	@cd tests/integration/terraform/aws && \
+		terraform import \
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			kubernetes_storage_class_v1.gp3 gp3 2>/dev/null || true
+	@echo "   Removing stale outputs from Terraform state (if any)..."
+	@cd tests/integration/terraform/aws && \
+		terraform state rm output.next_steps 2>/dev/null || true
+	@cd tests/integration/terraform/aws && \
+		terraform apply -auto-approve \
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]"
+	@echo ""
+	@KUBECONFIG_CMD=$$(cd tests/integration/terraform/aws && terraform output -raw kubeconfig_command 2>/dev/null); \
+	if [ -n "$$KUBECONFIG_CMD" ]; then \
+		echo "Updating kubeconfig..."; \
+		eval "$$KUBECONFIG_CMD"; \
+	fi
+	@echo ""
+	@echo "✅ EKS cluster and all prerequisites are ready"
+	@echo ""
+
+tf-output:
+	@echo "================================"
+	@echo "Terraform Outputs"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd tests/integration/terraform/aws && terraform output
+
+tf-destroy:
+	@echo "================================"
+	@echo "Destroying EKS Terraform Stack"
+	@echo "================================"
+	@echo "⚠️  This will delete the EKS cluster, VPC, node groups, IAM roles, and all associated resources."
+	@echo ""
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd tests/integration/terraform/aws && \
+		terraform destroy -auto-approve \
+			-var="aws_region=$${AWS_REGION}" \
+			-var="cluster_name=$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_type=$${TF_NODE_TYPE:-t3.medium}" \
+			-var="node_desired=$${TF_NODE_DESIRED:-2}" \
+			-var="node_min=$${TF_NODE_MIN:-1}" \
+			-var="node_max=$${TF_NODE_MAX:-3}" \
+			-var="lbc_chart_version=$${TF_LBC_CHART_VERSION:-1.8.1}" \
+			-var="allowed_public_access_cidrs=[$${TF_ALLOWED_PUBLIC_ACCESS_CIDRS:-\"0.0.0.0/0\"}]"
+	@echo ""
+	@echo "✅ All EKS resources have been destroyed"
