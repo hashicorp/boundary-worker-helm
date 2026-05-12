@@ -5,16 +5,26 @@ name: boundary-worker
 description: A Helm chart for HashiCorp Boundary Worker deployment
 type: application
 version: 0.1.0
-appVersion: "0.20.0"
+appVersion: "0.21-ent"
 keywords:
   - boundary
   - hashicorp
   - identity
   - access
   - security
+  - zero-trust
+  - worker
 home: https://www.boundaryproject.io/
 icon: https://www.hashicorp.com/img/logo-hashicorp.svg
 sources:
   - https://github.com/hashicorp/boundary-worker-helm
 maintainers:
   - name: HashiCorp
+    url: https://github.com/hashicorp/boundary-worker-helm
+annotations:
+  artifacthub.io/license: MPL-2.0
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial Helm chart for HashiCorp Boundary Worker
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/prerelease: "true"

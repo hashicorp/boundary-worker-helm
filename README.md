@@ -107,7 +107,7 @@ Check `values.yaml` before installing, especially:
 - `worker.persistence.recording.storageClass`
 - `worker.resources`
 
-The defaults use `gp2` for storage classes. Change that if your cluster does not provide `gp2`.
+The defaults use the cluster's default StorageClass. Override `storageClass` if you need a specific provisioner (e.g. `gp3` on AWS).
 
 If you want overrides, create a separate values file such as `my-values.yaml`.
 
@@ -464,7 +464,7 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `image.pullPolicy` | `IfNotPresent` | Kubernetes image pull policy. |
 | `imagePullSecrets` | `[]` | Optional registry credentials for private image pulls. |
 | `worker.config` | Embedded HCL block | Raw HCL worker configuration passed through a ConfigMap. Set this directly in your values file. |
-| `worker.terminationGracePeriodSeconds` | `90` | Pod termination grace period in seconds. Increase this for long-lived sessions. |
+| `worker.terminationGracePeriodSeconds` | `7200` | Pod termination grace period in seconds (2 hours). Allows active sessions to drain before pod termination. |
 | `worker.service.proxy.enabled` | `true` | Whether to create the proxy Service. |
 | `worker.service.proxy.type` | `LoadBalancer` | Service type for proxy traffic. |
 | `worker.service.proxy.port` | `9202` | Service port exposed for proxy traffic. |
@@ -482,12 +482,12 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `worker.persistence.authStorage.enabled` | `true` | Whether to create the auth storage PVC. Set to `false` when using KMS auth, which does not require persistent auth storage. |
 | `worker.persistence.authStorage.size` | `1Gi` | Size of the auth storage PVC. |
 | `worker.persistence.authStorage.accessMode` | `ReadWriteOnce` | Access mode for the auth storage PVC. |
-| `worker.persistence.authStorage.storageClass` | `gp2` | StorageClass for the auth storage PVC. |
+| `worker.persistence.authStorage.storageClass` | `""` | StorageClass for the auth storage PVC. Empty uses the cluster default. |
 | `worker.persistence.authStorage.path` | `/var/lib/boundary` | Mount path for auth storage. Must match `auth_storage_path` in the HCL. |
 | `worker.persistence.recording.enabled` | `true` | Whether to create a recording PVC and mount it into the worker pod. |
 | `worker.persistence.recording.size` | `10Gi` | Size of the recording PVC. |
 | `worker.persistence.recording.accessMode` | `ReadWriteOnce` | Access mode for the recording PVC. |
-| `worker.persistence.recording.storageClass` | `gp2` | StorageClass for the recording PVC. |
+| `worker.persistence.recording.storageClass` | `""` | StorageClass for the recording PVC. Empty uses the cluster default. |
 | `worker.persistence.recording.path` | `/boundary/recording` | Mount path for recording storage. Must match `recording_storage_path` in the HCL when recording is enabled. |
 | `podSecurityContext` | secure non-root defaults | Pod-level security context. |
 | `containerSecurityContext` | secure non-root defaults | Container-level security context with dropped Linux capabilities and read-only root filesystem. |

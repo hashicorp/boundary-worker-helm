@@ -1,3 +1,4 @@
+{{- /* Copyright IBM Corp. 2026 */ -}}
 {{/*
 Expand the name of the chart.
 */}}

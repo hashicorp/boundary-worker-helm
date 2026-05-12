@@ -17,13 +17,15 @@ worker {
   auth_storage_path = "/var/lib/boundary"
   recording_storage_path = "/boundary/recording"
   tags {
-    type = ["worker", "egress", "test"]
+    type = ["worker", "egress"]
   }
   
-  controller_generated_activation_token = "<activation-token>"
+  # REQUIRED: Set your controller-generated activation token
+  # controller_generated_activation_token = "your-activation-token-here"
 }
 
-hcp_boundary_cluster_id = "<cluster-id>"
+# REQUIRED: Set your HCP Boundary cluster ID or use initial_upstreams for self-managed
+# hcp_boundary_cluster_id = "your-cluster-id-here"
 
 events {
   audit_enabled       = true

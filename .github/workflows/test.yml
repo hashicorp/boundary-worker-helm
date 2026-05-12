@@ -2,7 +2,9 @@ name: Lint Pipeline
 
 on:
   push:
-    branches: [worker-helm-v0, ICU-18785, ICU-18794]
+    branches: [main, worker-helm-v0, ICU-18785, ICU-18794]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read

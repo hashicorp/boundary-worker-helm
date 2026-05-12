@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 Boundary Worker Chart has been installed successfully!
 
 Boundary Worker:
@@ -13,7 +15,7 @@ To complete the setup:
 2. Once LoadBalancer is assigned, update the worker config with the public address:
    helm upgrade {{ .Release.Name }} . \
      --namespace {{ .Release.Namespace }} \
-     --reuse-values \
+     -f <path/to/your-values.yaml> \
      --set-file worker.config="<path/to/worker.hcl>"
 
 For more information, visit https://github.com/hashicorp/boundary-worker-helm
