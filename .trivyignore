@@ -11,6 +11,17 @@ KSV-0020
 # This is a non-root group that provides adequate security
 KSV-0021
 
+# KSV-0109: ConfigMap storing secrets
+# Justification: False positive — the ConfigMap contains only HCL worker configuration.
+# The flagged text is a commented-out example key name showing users what to set;
+# no actual secret value is present in the ConfigMap data.
+KSV-0109
+
+# KSV-0110: Workload in default namespace
+# Justification: This is a Helm chart; namespace is user-specified at install time
+# via --namespace flag. The default namespace appears only in helm template output.
+KSV-0110
+
 # KSV-0125: Untrusted registry (Docker Hub)
 # Justification: HashiCorp officially publishes Boundary Enterprise images on Docker Hub
 # This is the official and trusted source for Boundary images
@@ -18,7 +29,7 @@ KSV-0125
 
 # KSV-0053: RBAC pods/exec permissions
 # Justification: 9 test pods require exec permissions to validate worker pod functionality
-# Tests: test-e2e-worker, test-network-connectivity, test-restart-resilience, 
+# Tests: test-e2e-worker, test-network-connectivity, test-restart-resilience,
 #        test-security-context, test-volume-mounts, test-worker-auth,
 #        test-worker-config-loaded, test-worker-ports, test-worker-process
 # Scope: Test namespace only, ephemeral execution during helm test
