@@ -314,7 +314,7 @@ tests:
           value: proxy
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
-          value: 60
+          value: 10
       - isNotNull:
           path: spec.template.spec.containers[0].readinessProbe
       - equal:
