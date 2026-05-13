@@ -15,6 +15,8 @@ endif
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
+.PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
+.PHONY: tf-setup-aks tf-plan-aks tf-destroy-aks tf-output-aks
 
 # ================================
 # Help Target
@@ -61,6 +63,19 @@ help:
 	@echo "  make tf-plan               - terraform plan (preview changes without applying)"
 	@echo "  make tf-destroy            - terraform destroy (tear down ALL AWS resources cleanly)"
 	@echo "  make tf-output             - Show terraform outputs (cluster name, kubeconfig cmd, etc.)"
+	@echo ""
+	@echo "Azure AKS Integration Testing targets:"
+	@echo "  make aks-setup             - Provision AKS cluster via Terraform (tf-setup-aks)"
+	@echo "  make aks-helm              - Install Helm chart with AKS values (managed-csi-premium, LoadBalancer)"
+	@echo "  make aks-test              - Run full AKS integration test suite"
+	@echo "  make aks-full              - Full AKS workflow (aks-setup + worker-config + helm + test)"
+	@echo "  make aks-cleanup           - Uninstall Helm release from AKS (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo ""
+	@echo "Terraform AKS targets:"
+	@echo "  make tf-setup-aks          - terraform init + apply (VNet + AKS + StorageClass)"
+	@echo "  make tf-plan-aks           - terraform plan (preview changes without applying)"
+	@echo "  make tf-destroy-aks        - terraform destroy (tear down ALL Azure resources cleanly)"
+	@echo "  make tf-output-aks         - Show terraform outputs (cluster name, kubeconfig cmd, etc.)"
 	@echo "================================"
 
 # ================================
@@ -717,6 +732,199 @@ tf-output:
 	@echo "================================"
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
 	@cd tests/integration/terraform/aws && terraform output
+
+# ================================
+# Azure AKS Integration Testing Targets
+# ================================
+
+aks-setup:
+	@$(MAKE) tf-setup-aks
+
+aks-helm:
+	@echo "Installing Helm Chart on AKS..."
+	@echo ""
+	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@echo "Updating kubeconfig for cluster $${AKS_CLUSTER_NAME}..."; \
+	az aks get-credentials \
+		--resource-group "$${AZURE_RESOURCE_GROUP}" \
+		--name "$${AKS_CLUSTER_NAME}" \
+		--overwrite-existing; \
+	AKS_CONTEXT="$${AKS_CLUSTER_NAME}"; \
+	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"; \
+	if helm status boundary-worker -n boundary --kube-context "$${AKS_CONTEXT}" >/dev/null 2>&1; then \
+		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make aks-cleanup' first to reinstall."; \
+	else \
+		echo "Installing boundary-worker chart with AKS values..."; \
+		helm install boundary-worker . \
+			--namespace boundary \
+			--create-namespace \
+			--kube-context "$${AKS_CONTEXT}" \
+			--set worker.service.proxy.type=LoadBalancer \
+			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
+			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+			--set-file worker.config=worker.hcl \
+			--timeout 10m \
+			--rollback-on-failure; \
+	fi; \
+	echo ""; \
+	echo "Deployed resources:"; \
+	kubectl get all -n boundary --context "$${AKS_CONTEXT}"
+	@echo ""
+	@echo "✅ Helm chart installed on AKS"
+	@echo ""
+
+aks-test:
+	@echo "Running AKS Integration Tests..."
+	@echo ""
+	@for v in AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_LOCATION AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set. Check your .env or export it."; \
+			exit 1; \
+		fi; \
+	done
+	@echo "Setting Azure subscription $${AZURE_SUBSCRIPTION_ID}..."; \
+	CURRENT_TENANT=$$(az account show --query tenantId -o tsv 2>/dev/null || true); \
+	if [ "$$CURRENT_TENANT" != "$${AZURE_TENANT_ID}" ]; then \
+		echo "Not logged in to tenant $${AZURE_TENANT_ID}, running az login..."; \
+		az login --tenant "$${AZURE_TENANT_ID}"; \
+	fi; \
+	az account set --subscription "$${AZURE_SUBSCRIPTION_ID}"
+	@bash tests/integration/aks-integration-test.sh
+	@echo ""
+
+aks-full:
+	@echo "================================"
+	@echo "Full AKS Integration Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) tf-setup-aks
+	@$(MAKE) worker-config
+	@$(MAKE) aks-helm
+	@$(MAKE) aks-test
+	@echo ""
+	@echo "✅ End-to-end AKS workflow has been completed successfully"
+	@echo ""
+	@echo "To cleanup: make aks-cleanup"
+
+aks-cleanup:
+	@echo "================================"
+	@echo "Cleaning Up AKS Resources"
+	@echo "================================"
+	@echo ""
+	@for v in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@az aks get-credentials \
+		--resource-group "$${AZURE_RESOURCE_GROUP}" \
+		--name "$${AKS_CLUSTER_NAME}" \
+		--overwrite-existing 2>/dev/null || true; \
+	AKS_CONTEXT="$${AKS_CLUSTER_NAME}"; \
+	if helm status boundary-worker -n boundary --kube-context "$${AKS_CONTEXT}" >/dev/null 2>&1; then \
+		echo "Uninstalling Helm release boundary-worker..."; \
+		helm uninstall boundary-worker --namespace boundary --kube-context "$${AKS_CONTEXT}" --wait --timeout 5m; \
+		echo "✅ Helm release uninstalled"; \
+	else \
+		echo "⚠️  Helm release not found"; \
+	fi; \
+	kubectl delete namespace boundary --context "$${AKS_CONTEXT}" --ignore-not-found 2>/dev/null || true
+	@rm -f worker.hcl
+	@echo "✅ Removed worker.hcl"
+	@if [ "$${DESTROY_CLUSTER:-false}" = "true" ]; then \
+		echo ""; \
+		echo "Destroying Terraform AKS stack (DESTROY_CLUSTER=true)..."; \
+		$(MAKE) tf-destroy-aks; \
+	else \
+		echo ""; \
+		echo "ℹ  AKS cluster retained. To destroy: DESTROY_CLUSTER=true make aks-cleanup"; \
+	fi
+
+# ================================
+# Terraform AKS Targets
+# ================================
+
+tf-plan-aks:
+	@echo "================================"
+	@echo "Terraform Plan (AKS)"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@cd tests/integration/terraform/azure && \
+		terraform init -upgrade && \
+		terraform plan \
+			-var="azure_subscription_id=$${AZURE_SUBSCRIPTION_ID:-}" \
+			-var="azure_location=$${AZURE_LOCATION:-eastus}" \
+			-var="resource_group_name=$${AZURE_RESOURCE_GROUP:-boundary-worker-rg}" \
+			-var="cluster_name=$${AKS_CLUSTER_NAME:-boundary-aks-cluster}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_vm_size=$${TF_NODE_VM_SIZE:-Standard_D2s_v3}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}" \
+			-var="node_min_count=$${TF_NODE_MIN:-1}" \
+			-var="node_max_count=$${TF_NODE_MAX:-3}" \
+			-var="storage_class_name=$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"
+
+tf-setup-aks:
+	@echo "================================"
+	@echo "Provisioning AKS with Terraform"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@command -v az >/dev/null 2>&1 || { echo "❌ Azure CLI not found. Install: brew install azure-cli"; exit 1; }
+	@cd tests/integration/terraform/azure && \
+		terraform init -upgrade && \
+		terraform apply -auto-approve \
+			-var="azure_subscription_id=$${AZURE_SUBSCRIPTION_ID:-}" \
+			-var="azure_location=$${AZURE_LOCATION:-eastus}" \
+			-var="resource_group_name=$${AZURE_RESOURCE_GROUP:-boundary-worker-rg}" \
+			-var="cluster_name=$${AKS_CLUSTER_NAME:-boundary-aks-cluster}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_vm_size=$${TF_NODE_VM_SIZE:-Standard_D2s_v3}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}" \
+			-var="node_min_count=$${TF_NODE_MIN:-1}" \
+			-var="node_max_count=$${TF_NODE_MAX:-3}" \
+			-var="storage_class_name=$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"
+	@echo ""
+	@KUBECONFIG_CMD=$$(cd tests/integration/terraform/azure && terraform output -raw kubeconfig_command 2>/dev/null); \
+	if [ -n "$$KUBECONFIG_CMD" ]; then \
+		echo "Updating kubeconfig..."; \
+		eval "$$KUBECONFIG_CMD"; \
+	fi
+	@echo ""
+	@echo "✅ AKS cluster and all prerequisites are ready"
+	@echo ""
+
+tf-destroy-aks:
+	@echo "================================"
+	@echo "Destroying AKS Terraform Stack"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd tests/integration/terraform/azure && \
+		terraform init -upgrade && \
+		terraform destroy -auto-approve \
+			-var="azure_subscription_id=$${AZURE_SUBSCRIPTION_ID:-}" \
+			-var="azure_location=$${AZURE_LOCATION:-eastus}" \
+			-var="resource_group_name=$${AZURE_RESOURCE_GROUP:-boundary-worker-rg}" \
+			-var="cluster_name=$${AKS_CLUSTER_NAME:-boundary-aks-cluster}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_vm_size=$${TF_NODE_VM_SIZE:-Standard_D2s_v3}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}" \
+			-var="node_min_count=$${TF_NODE_MIN:-1}" \
+			-var="node_max_count=$${TF_NODE_MAX:-3}" \
+			-var="storage_class_name=$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"
+	@echo ""
+	@echo "✅ AKS cluster and all Azure resources destroyed"
+	@echo ""
+
+tf-output-aks:
+	@echo "================================"
+	@echo "Terraform Outputs (AKS)"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd tests/integration/terraform/azure && terraform output
 
 tf-destroy:
 	@echo "================================"
