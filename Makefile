@@ -13,6 +13,7 @@ endif
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: kind-matrix-test kind-matrix-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
@@ -50,6 +51,8 @@ help:
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
+	@echo "  make kind-matrix-test      - Run tcp-target-conn-test.sh across the 2 KIND versions prior to latest (auto-resolved)"
+	@echo "  make kind-matrix-cleanup   - Delete the acceptance cluster and cached KIND binaries"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
@@ -545,6 +548,33 @@ acceptance-full:
 	@echo ""
 	@echo "To cleanup, run: make acceptance-cleanup"
 	@echo ""
+
+# ================================
+# KIND Version Matrix Testing
+# ================================
+
+kind-matrix-test:
+	@echo "================================"
+	@echo "KIND Version Matrix Test"
+	@echo "Versions: resolved dynamically from GitHub Releases"
+	@echo "================================"
+	@chmod +x tests/acceptance/kind-version-matrix-test.sh
+	@bash tests/acceptance/kind-version-matrix-test.sh
+
+kind-matrix-cleanup:
+	@echo "================================"
+	@echo "KIND Matrix Cleanup"
+	@echo "================================"
+	@find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'kind-v[0-9]*' 2>/dev/null | while read -r BIN; do \
+		if [ -x "$$BIN" ] && "$$BIN" get clusters 2>/dev/null | grep -q "^acceptance$$"; then \
+			echo "Deleting cluster using $$(basename $$BIN) binary..."; \
+			"$$BIN" delete cluster --name acceptance; \
+		fi; \
+		rm -f "$$BIN"; \
+		echo "✅ Removed cached $$(basename $$BIN) binary"; \
+	done
+	@rm -f worker.hcl
+	@echo "✅ KIND matrix cleanup complete"
 
 acceptance-cleanup:
 	@echo "================================"

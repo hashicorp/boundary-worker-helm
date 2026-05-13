@@ -19,13 +19,11 @@ worker {
   tags {
     type = ["worker", "egress"]
   }
-  
-  # REQUIRED: Set your controller-generated activation token
-  # controller_generated_activation_token = "your-activation-token-here"
+
+  controller_generated_activation_token = "<activation-token>"
 }
 
-# REQUIRED: Set your HCP Boundary cluster ID or use initial_upstreams for self-managed
-# hcp_boundary_cluster_id = "your-cluster-id-here"
+hcp_boundary_cluster_id = "<cluster-id>"
 
 events {
   audit_enabled       = true

@@ -16,11 +16,36 @@ fail() { echo "❌ FAILED: $1"; exit 1; }
 info() { echo "   $1"; }
 warn() { echo "⚠️WARN: $1"; }
 
+# ── Cleanup trap: cancel any open sessions and kill background processes ──────
+CONN_PID=""
+CONN_SESSION_ID=""
+SESSION_ID=""
+CONN_OUT=""
+_cleanup() {
+    if [ -n "${CONN_SESSION_ID}" ]; then
+        boundary sessions cancel \
+            -id "${CONN_SESSION_ID}" \
+            -addr "${BOUNDARY_ADDR:-}" \
+            -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    fi
+    if [ -n "${SESSION_ID}" ]; then
+        boundary sessions cancel \
+            -id "${SESSION_ID}" \
+            -addr "${BOUNDARY_ADDR:-}" \
+            -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    fi
+    [ -n "${CONN_PID}" ] && kill "${CONN_PID}" 2>/dev/null || true
+    [ -n "${CONN_OUT}" ] && rm -f "${CONN_OUT}" || true
+}
+trap _cleanup EXIT
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 CONTEXT="kind-acceptance"
 NAMESPACE="boundary"
 DEPLOY="boundary-worker-deployment"
-TIMEOUT=300   # seconds to wait for registration / deployment readiness
+# Allow callers (e.g. kind-version-matrix-test.sh) to override the timeout.
+# Default is 300s for standalone runs; the matrix test exports TIMEOUT=600.
+TIMEOUT="${TIMEOUT:-300}"
 
 # ── Load .env ─────────────────────────────────────────────────────────────────
 if [ -f .env ]; then
@@ -187,6 +212,14 @@ SESSION_STATUS=$(printf '%s\n' "${SESSION_OUT}" \
     | cut -d'"' -f4 || true)
 [ -n "${SESSION_STATUS}" ] && info "Session status: ${SESSION_STATUS}"
 pass "Session authorized and validated"
+
+# Cancel the authorize-session token immediately — it is not used for the
+# TCP connect test below (boundary connect creates its own session).
+boundary sessions cancel \
+    -id "${SESSION_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+SESSION_ID=""   # cleared so the EXIT trap does not double-cancel
 echo ""
 
 # Test 4: TCP connection & session field validation
@@ -238,12 +271,15 @@ if [ -n "${CONN_SESSION_ID}" ]; then
         -id "${CONN_SESSION_ID}" \
         -addr "${BOUNDARY_ADDR}" \
         -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    CONN_SESSION_ID=""   # cleared so the EXIT trap does not double-cancel
     pass "Session cancelled Successfully"
     echo ""
 fi
 kill "${CONN_PID}" 2>/dev/null || true
 wait "${CONN_PID}" 2>/dev/null || true
+CONN_PID=""
 rm -f "${CONN_OUT}"
+CONN_OUT=""
 
 [ "${CONN_PASS}" -eq 1 ] || fail "One or more session fields were missing"
 echo ""
