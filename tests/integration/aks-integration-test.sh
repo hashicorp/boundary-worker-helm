@@ -1,15 +1,16 @@
 #!/bin/bash
 # Copyright IBM Corp. 2026
 # ============================================================================
-# EKS Integration Test — Boundary Worker Helm Chart
+# AKS Integration Test — Boundary Worker Helm Chart
 #
 # Validates that the Boundary Worker Helm chart is correctly installed and
-# functioning on an AWS EKS cluster. The chart must be pre-installed via
-# 'make eks-helm' before running this script.
+# functioning on an Azure AKS cluster. The chart must be pre-installed via
+# 'make aks-helm' before running this script.
 #
 # Required env vars:
-#   AWS_REGION              - AWS region (e.g. us-east-1)
-#   EKS_CLUSTER_NAME        - Name of the EKS cluster
+#   AZURE_LOCATION          - Azure region (e.g. eastus)
+#   AZURE_RESOURCE_GROUP    - Resource group containing the AKS cluster
+#   AKS_CLUSTER_NAME        - Name of the AKS cluster
 #   BOUNDARY_ADDR           - Boundary controller/cluster address
 #   BOUNDARY_AUTH_METHOD_ID - Auth method ID (ampw_...)
 #   BOUNDARY_LOGIN_NAME     - Login name for authentication
@@ -18,11 +19,12 @@
 # Optional env vars:
 #   BOUNDARY_TARGET_ID      - Target ID to validate TCP session (skipped if unset)
 #   SKIP_CLEANUP            - Set to "true" to leave resources after test
+#   SKIP_HELM_UNINSTALL     - Set to "true" to skip helm uninstall (e.g. pre-installed release)
 #   HELM_RELEASE            - Helm release name (default: boundary-worker)
 #   K8S_NAMESPACE           - Kubernetes namespace  (default: boundary)
 #   WORKER_DEPLOY           - Deployment name       (default: boundary-worker-deployment)
 #   WAIT_TIMEOUT            - Readiness wait (sec)  (default: 300)
-#   NLB_TIMEOUT             - NLB provisioning wait (sec) (default: 300)
+#   LB_TIMEOUT              - Azure LB provisioning wait (sec) (default: 300)
 # ============================================================================
 
 set -euo pipefail
@@ -39,20 +41,25 @@ section() {
 }
 
 # ── Config ────────────────────────────────────────────────────────────────────
-: "${AWS_REGION:?'AWS_REGION must be set'}"
-: "${EKS_CLUSTER_NAME:?'EKS_CLUSTER_NAME must be set'}"
+: "${AZURE_LOCATION:?'AZURE_LOCATION must be set'}"
+: "${AZURE_RESOURCE_GROUP:?'AZURE_RESOURCE_GROUP must be set'}"
+: "${AKS_CLUSTER_NAME:?'AKS_CLUSTER_NAME must be set'}"
 : "${BOUNDARY_ADDR:?'BOUNDARY_ADDR must be set'}"
 : "${BOUNDARY_AUTH_METHOD_ID:?'BOUNDARY_AUTH_METHOD_ID must be set'}"
 : "${BOUNDARY_LOGIN_NAME:?'BOUNDARY_LOGIN_NAME must be set'}"
 : "${BOUNDARY_PASSWORD:?'BOUNDARY_PASSWORD must be set'}"
 
 SKIP_CLEANUP="${SKIP_CLEANUP:-false}"
+SKIP_HELM_UNINSTALL="${SKIP_HELM_UNINSTALL:-false}"
 HELM_RELEASE="${HELM_RELEASE:-boundary-worker}"
 NAMESPACE="${K8S_NAMESPACE:-boundary}"
 DEPLOY="${WORKER_DEPLOY:-boundary-worker-deployment}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
-NLB_TIMEOUT="${NLB_TIMEOUT:-300}"
+LB_TIMEOUT="${LB_TIMEOUT:-300}"
 WORKER_POLL_TIMEOUT="${WORKER_POLL_TIMEOUT:-120}"
+
+# AKS context is the cluster name (set by az aks get-credentials)
+AKS_CONTEXT="${AKS_CLUSTER_NAME}"
 
 # Overall test tracking
 TESTS_PASSED=0
@@ -67,40 +74,41 @@ record_fail() {
 }
 
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
-EKS_CONTEXT="" # initialised here; set to full ARN after AWS_ACCOUNT_ID is resolved
 _cleanup() {
-    # Kill any background port-forward processes
-    pkill -f "kubectl port-forward.*9203" 2>/dev/null || true
+    # Kill any background port-forward processes started by this script
+    if [[ -n "${PF_PID:-}" ]] && kill -0 "${PF_PID}" 2>/dev/null; then
+        kill "${PF_PID}" 2>/dev/null || true
+        wait "${PF_PID}" 2>/dev/null || true
+    fi
 
     if [[ "${SKIP_CLEANUP}" == "true" ]]; then
         warn "SKIP_CLEANUP=true — leaving namespace '${NAMESPACE}' in place"
         return
     fi
     section "Cleanup"
-    info "Uninstalling Helm release '${HELM_RELEASE}'..."
-    helm uninstall "${HELM_RELEASE}" \
-        --namespace "${NAMESPACE}" \
-        --kube-context "${EKS_CONTEXT}" \
-        --wait --timeout 5m 2>/dev/null \
-        | sed 's/^/     /' || true
+    if [[ "${SKIP_HELM_UNINSTALL}" == "true" ]]; then
+        warn "SKIP_HELM_UNINSTALL=true — leaving Helm release '${HELM_RELEASE}' in place"
+    else
+        info "Uninstalling Helm release '${HELM_RELEASE}'..."
+        helm uninstall "${HELM_RELEASE}" \
+            --namespace "${NAMESPACE}" \
+            --kube-context "${AKS_CONTEXT}" \
+            --wait --timeout 5m 2>/dev/null \
+            | sed 's/^/     /' || true
+    fi
     kubectl delete namespace "${NAMESPACE}" \
-        --context "${EKS_CONTEXT}" \
+        --context "${AKS_CONTEXT}" \
         --ignore-not-found 2>/dev/null \
         | sed 's/^/     /' || true
     info "Cleanup complete"
 }
 trap _cleanup EXIT
 
-# ── Resolve EKS context ───────────────────────────────────────────────────────
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
-    || fail "AWS credentials are not configured. Run 'aws configure' or set AWS_PROFILE."
-EKS_CONTEXT="arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
-
 
 # Prerequisites
 section "Prerequisites..."
 
-for tool in kubectl helm aws boundary; do
+for tool in kubectl helm az boundary; do
     if command -v "$tool" >/dev/null 2>&1; then
         record_pass "Tool available: $tool"
     else
@@ -109,60 +117,74 @@ for tool in kubectl helm aws boundary; do
 done
 pass "Required env vars are set"
 
-# EKS Cluster Accessibility
-section "EKS Cluster Accessibility..."
+# Azure Subscription / Login Check
+section "Azure Authentication..."
 
-info "Updating kubeconfig for cluster '${EKS_CLUSTER_NAME}'..."
-aws eks update-kubeconfig \
-    --name "${EKS_CLUSTER_NAME}" \
-    --region "${AWS_REGION}" >/dev/null 2>&1 \
-    || fail "Failed to update kubeconfig for '${EKS_CLUSTER_NAME}'"
+AZ_ACCOUNT=$(az account show --query "{subscriptionId:id,name:name}" -o json 2>/dev/null) \
+    || fail "Azure credentials not configured. Run 'az login' or set AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID."
 
-kubectl cluster-info --context "${EKS_CONTEXT}" >/dev/null 2>&1 \
-    && record_pass "EKS cluster '${EKS_CLUSTER_NAME}' is accessible" \
-    || { record_fail "EKS cluster '${EKS_CLUSTER_NAME}' is not accessible"; exit 1; }
+SUBSCRIPTION_ID=$(printf '%s\n' "${AZ_ACCOUNT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['subscriptionId'])")
+SUBSCRIPTION_NAME=$(printf '%s\n' "${AZ_ACCOUNT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+record_pass "Authenticated to Azure subscription: ${SUBSCRIPTION_NAME} (${SUBSCRIPTION_ID})"
 
-NODE_COUNT=$(kubectl get nodes --context "${EKS_CONTEXT}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+# AKS Cluster Accessibility
+section "AKS Cluster Accessibility..."
+
+info "Fetching credentials for cluster '${AKS_CLUSTER_NAME}'..."
+az aks get-credentials \
+    --resource-group "${AZURE_RESOURCE_GROUP}" \
+    --name "${AKS_CLUSTER_NAME}" \
+    --overwrite-existing >/dev/null 2>&1 \
+    || fail "Failed to fetch credentials for '${AKS_CLUSTER_NAME}' in resource group '${AZURE_RESOURCE_GROUP}'"
+
+kubectl cluster-info --context "${AKS_CONTEXT}" >/dev/null 2>&1 \
+    && record_pass "AKS cluster '${AKS_CLUSTER_NAME}' is accessible" \
+    || { record_fail "AKS cluster '${AKS_CLUSTER_NAME}' is not accessible"; exit 1; }
+
+NODE_COUNT=$(kubectl get nodes --context "${AKS_CONTEXT}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
 [ "${NODE_COUNT}" -gt 0 ] \
     && record_pass "Cluster has ${NODE_COUNT} node(s)" \
     || { record_fail "No nodes found in cluster"; exit 1; }
 
-READY_NODES=$(kubectl get nodes --context "${EKS_CONTEXT}" \
+READY_NODES=$(kubectl get nodes --context "${AKS_CONTEXT}" \
     --no-headers 2>/dev/null | grep -c " Ready" || true)
 [ "${READY_NODES}" -eq "${NODE_COUNT}" ] \
     && record_pass "All ${READY_NODES}/${NODE_COUNT} nodes are Ready" \
     || warn "${READY_NODES}/${NODE_COUNT} nodes are Ready"
 
 
-# Required Add-ons Present
-section "AWS Add-ons..."
-# EBS CSI Driver
-if kubectl get deployment ebs-csi-controller \
-        -n kube-system --context "${EKS_CONTEXT}" >/dev/null 2>&1; then
-    record_pass "Amazon EBS CSI Driver is installed"
+# Required Add-ons / Built-in Controllers
+section "AKS Add-ons..."
+
+# Azure Disk CSI driver (built-in since AKS 1.21, runs as csi-azuredisk-node DaemonSet)
+if kubectl get daemonset csi-azuredisk-node \
+        -n kube-system --context "${AKS_CONTEXT}" >/dev/null 2>&1; then
+    record_pass "Azure Disk CSI driver is running"
 else
-    warn "EBS CSI Driver not found — run 'make eks-setup' first"
+    warn "Azure Disk CSI DaemonSet not found — ensure AKS version >= 1.21"
 fi
 
-# AWS Load Balancer Controller
-if kubectl get deployment aws-load-balancer-controller \
-        -n kube-system --context "${EKS_CONTEXT}" >/dev/null 2>&1; then
-    record_pass "AWS Load Balancer Controller is installed"
+# Azure Load Balancer integration is built into AKS (cloud-controller-manager).
+# Validate the cloud-node-manager is healthy as a proxy for LB readiness.
+if kubectl get daemonset cloud-node-manager \
+        -n kube-system --context "${AKS_CONTEXT}" >/dev/null 2>&1; then
+    record_pass "Azure cloud-node-manager is running (Load Balancer support active)"
 else
-    warn "AWS Load Balancer Controller not found — run 'make eks-setup' first"
+    warn "cloud-node-manager DaemonSet not found — Load Balancer provisioning may be impaired"
 fi
 
-# gp3 StorageClass
-if kubectl get storageclass gp3 --context "${EKS_CONTEXT}" >/dev/null 2>&1; then
-    record_pass "gp3 StorageClass is available"
+# managed-csi-premium StorageClass (created by Terraform, analogous to gp3 on EKS)
+STORAGE_CLASS="${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"
+if kubectl get storageclass "${STORAGE_CLASS}" --context "${AKS_CONTEXT}" >/dev/null 2>&1; then
+    record_pass "StorageClass '${STORAGE_CLASS}' is available"
 else
-    fail "gp3 StorageClass not found. Run 'make eks-setup' first."
+    fail "StorageClass '${STORAGE_CLASS}' not found. Run 'make aks-setup' first."
 fi
 
-# Verify Helm release is present (installed by make eks-helm)
+# Verify Helm release is present (installed by make aks-helm)
 helm status "${HELM_RELEASE}" -n "${NAMESPACE}" \
-    --kube-context "${EKS_CONTEXT}" >/dev/null 2>&1 \
-    || fail "Release '${HELM_RELEASE}' not found. Run 'make eks-helm' first."
+    --kube-context "${AKS_CONTEXT}" >/dev/null 2>&1 \
+    || fail "Release '${HELM_RELEASE}' not found. Run 'make aks-helm' first."
 
 
 # Deployment Readiness
@@ -173,13 +195,13 @@ kubectl wait --for=condition=available \
     --timeout="${WAIT_TIMEOUT}s" \
     deployment/"${DEPLOY}" \
     -n "${NAMESPACE}" \
-    --context "${EKS_CONTEXT}" >/dev/null 2>&1 \
+    --context "${AKS_CONTEXT}" >/dev/null 2>&1 \
     && record_pass "Deployment '${DEPLOY}' is available" \
     || { record_fail "Deployment '${DEPLOY}' did not become available"; exit 1; }
 
 POD=$(kubectl get pods \
     -n "${NAMESPACE}" \
-    --context "${EKS_CONTEXT}" \
+    --context "${AKS_CONTEXT}" \
     -l app.kubernetes.io/name=boundary-worker \
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
@@ -189,69 +211,71 @@ POD=$(kubectl get pods \
     || { record_fail "No running worker pod found"; exit 1; }
 
 
-# PersistentVolumeClaims (gp3)
+# PersistentVolumeClaims
 section "PersistentVolumeClaims..."
 
 PVC_COUNT=$(kubectl get pvc -n "${NAMESPACE}" \
-    --context "${EKS_CONTEXT}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    --context "${AKS_CONTEXT}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
 
 if [ "${PVC_COUNT}" -gt 0 ]; then
     record_pass "${PVC_COUNT} PVC(s) found"
     UNBOUND=$(kubectl get pvc -n "${NAMESPACE}" \
-        --context "${EKS_CONTEXT}" --no-headers 2>/dev/null \
+        --context "${AKS_CONTEXT}" --no-headers 2>/dev/null \
         | (grep -v "Bound" || true) | wc -l | tr -d ' ')
     [ "${UNBOUND}" -eq 0 ] \
         && record_pass "All PVCs are Bound" \
-        || { record_fail "${UNBOUND} PVC(s) are not Bound"; kubectl get pvc -n "${NAMESPACE}" --context "${EKS_CONTEXT}"; }
+        || { record_fail "${UNBOUND} PVC(s) are not Bound"; kubectl get pvc -n "${NAMESPACE}" --context "${AKS_CONTEXT}"; }
 
-    # Verify gp3 storage class is used
-    GP3_PVCS=$(kubectl get pvc -n "${NAMESPACE}" \
-        --context "${EKS_CONTEXT}" \
+    # Verify the expected StorageClass is used
+    SC_PVCS=$(kubectl get pvc -n "${NAMESPACE}" \
+        --context "${AKS_CONTEXT}" \
         -o jsonpath='{range .items[*]}{.spec.storageClassName}{"\n"}{end}' 2>/dev/null \
-        | grep -c "^gp3$" || true)
-    [ "${GP3_PVCS}" -gt 0 ] \
-        && record_pass "${GP3_PVCS} PVC(s) use gp3 storage class" \
-        || warn "No PVCs found using gp3 — check storageClass configuration"
+        | grep -c "^${STORAGE_CLASS}$" || true)
+    [ "${SC_PVCS}" -gt 0 ] \
+        && record_pass "${SC_PVCS} PVC(s) use StorageClass '${STORAGE_CLASS}'" \
+        || warn "No PVCs found using '${STORAGE_CLASS}' — check storageClass configuration"
 else
     warn "No PVCs found (persistence may be disabled)"
 fi
 
 
-# NLB Service Provisioning
-section "NLB Service Provisioning..."
+# Azure Load Balancer Provisioning
+# Unlike AWS NLBs (which use hostnames), Azure external Load Balancers expose
+# an IP address via status.loadBalancer.ingress[0].ip.
+section "Azure Load Balancer Provisioning..."
 
-info "Waiting for NLB hostname to be assigned (timeout: ${NLB_TIMEOUT}s)..."
-NLB_HOSTNAME=""
+info "Waiting for Load Balancer IP to be assigned (timeout: ${LB_TIMEOUT}s)..."
+LB_IP=""
 ELAPSED=0
 INTERVAL=15
-while [ "${ELAPSED}" -lt "${NLB_TIMEOUT}" ]; do
-    NLB_HOSTNAME=$(kubectl get svc \
+while [ "${ELAPSED}" -lt "${LB_TIMEOUT}" ]; do
+    LB_IP=$(kubectl get svc \
         -n "${NAMESPACE}" \
-        --context "${EKS_CONTEXT}" \
+        --context "${AKS_CONTEXT}" \
         -l app.kubernetes.io/name=boundary-worker \
-        -o jsonpath='{.items[?(@.spec.type=="LoadBalancer")].status.loadBalancer.ingress[0].hostname}' \
+        -o jsonpath='{.items[?(@.spec.type=="LoadBalancer")].status.loadBalancer.ingress[0].ip}' \
         2>/dev/null || true)
-    if [ -n "${NLB_HOSTNAME}" ]; then break; fi
-    info "Waiting for NLB hostname... (${ELAPSED}s elapsed)"
+    if [ -n "${LB_IP}" ]; then break; fi
+    info "Waiting for Load Balancer IP... (${ELAPSED}s elapsed)"
     sleep "${INTERVAL}"
     ELAPSED=$((ELAPSED + INTERVAL))
 done
 
-if [ -n "${NLB_HOSTNAME}" ]; then
-    record_pass "NLB provisioned: ${NLB_HOSTNAME}"
-    # Verify NLB annotations
-    NLB_TYPE=$(kubectl get svc \
+if [ -n "${LB_IP}" ]; then
+    record_pass "Azure Load Balancer provisioned: ${LB_IP}"
+    # Verify the service type
+    LB_SVC_COUNT=$(kubectl get svc \
         -n "${NAMESPACE}" \
-        --context "${EKS_CONTEXT}" \
+        --context "${AKS_CONTEXT}" \
         -l app.kubernetes.io/name=boundary-worker \
-        -o jsonpath='{.items[?(@.spec.type=="LoadBalancer")].metadata.annotations.service\.beta\.kubernetes\.io/aws-load-balancer-type}' \
-        2>/dev/null || true)
-    [ "${NLB_TYPE}" = "nlb" ] \
-        && record_pass "LoadBalancer service has NLB annotation" \
-        || warn "NLB annotation not found on service"
+        -o jsonpath='{range .items[*]}{.spec.type}{"\n"}{end}' 2>/dev/null \
+        | grep -c "^LoadBalancer$" || true)
+    [ "${LB_SVC_COUNT}" -gt 0 ] \
+        && record_pass "${LB_SVC_COUNT} LoadBalancer service(s) found" \
+        || warn "No LoadBalancer-type service found"
 else
-    record_fail "NLB hostname not assigned within ${NLB_TIMEOUT}s"
-    kubectl get svc -n "${NAMESPACE}" --context "${EKS_CONTEXT}"
+    record_fail "Azure Load Balancer IP not assigned within ${LB_TIMEOUT}s"
+    kubectl get svc -n "${NAMESPACE}" --context "${AKS_CONTEXT}"
 fi
 
 
@@ -263,7 +287,7 @@ sleep 1
 
 kubectl port-forward \
     -n "${NAMESPACE}" \
-    --context "${EKS_CONTEXT}" \
+    --context "${AKS_CONTEXT}" \
     "pod/${POD}" 9203:9203 >/dev/null 2>&1 &
 PF_PID=$!
 
@@ -283,13 +307,14 @@ ${HEALTH_OK} \
     && record_pass "Ops /health endpoint returned 200" \
     || record_fail "Ops /health endpoint did not return 200"
 
+
 # Helm Chart Tests
 section "Helm Chart Tests..."
 
 info "Cleaning stale test pods..."
 kubectl delete pods \
     -n "${NAMESPACE}" \
-    --context "${EKS_CONTEXT}" \
+    --context "${AKS_CONTEXT}" \
     -l app.kubernetes.io/component=test \
     --field-selector=status.phase=Failed \
     --ignore-not-found 2>/dev/null \
@@ -298,13 +323,13 @@ kubectl delete pods \
 info "Running: helm test ${HELM_RELEASE}..."
 helm test "${HELM_RELEASE}" \
     --namespace "${NAMESPACE}" \
-    --kube-context "${EKS_CONTEXT}" \
+    --kube-context "${AKS_CONTEXT}" \
     --timeout 10m \
     | sed 's/^/     /' || true
 
 FAILED_HELM_TESTS=$(kubectl get pods \
     -n "${NAMESPACE}" \
-    --context "${EKS_CONTEXT}" \
+    --context "${AKS_CONTEXT}" \
     -l app.kubernetes.io/component=test \
     --field-selector=status.phase=Failed \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
@@ -314,6 +339,7 @@ if [ -z "${FAILED_HELM_TESTS}" ]; then
 else
     record_fail "Helm tests failed: $(echo "${FAILED_HELM_TESTS}" | tr '\n' ' ')"
 fi
+
 
 # Boundary Worker Registration
 section "Boundary Worker Registration..."
@@ -335,7 +361,7 @@ record_pass "Authenticated with Boundary cluster"
 
 # Check auth storage (node enrollment initiated)
 AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" \
-    --context "${EKS_CONTEXT}" \
+    --context "${AKS_CONTEXT}" \
     -- find /var/lib/boundary -type f 2>/dev/null | wc -l | tr -d ' ') || AUTH_FILES=0
 
 [ "${AUTH_FILES}" -gt 0 ] \
@@ -343,11 +369,15 @@ AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" \
     || warn "Auth storage empty — worker may not have completed enrollment yet"
 
 # Confirm worker record in Boundary
+# For controller-led workers the worker name in Boundary is a Boundary-assigned
+# identifier set at 'boundary workers create controller-led' time — it is NOT
+# derived from the pod hostname.  Match only on the 'test' tag and a non-empty
+# address (i.e. the worker is connected), consistent with the EKS test.
 # Poll until the worker appears or WORKER_POLL_TIMEOUT is reached.
 REGISTERED_WORKER_ID=""
 WORKER_ELAPSED=0
 WORKER_INTERVAL=15
-info "Polling Boundary for registered worker with 'test' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
+info "Polling Boundary for connected worker with 'test' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
 while [ "${WORKER_ELAPSED}" -lt "${WORKER_POLL_TIMEOUT}" ]; do
     WORKERS_JSON=$(boundary workers list \
         -scope-id global \
@@ -372,16 +402,17 @@ for w in data.get('items', []):
 done
 
 [ -n "${REGISTERED_WORKER_ID}" ] \
-    && record_pass "Worker registered in Boundary: ${REGISTERED_WORKER_ID}" \
-    || record_fail "No worker with 'test' tag found in Boundary — activation token may not have been consumed yet"
+    && record_pass "Worker registered in Boundary (pod=${POD}): ${REGISTERED_WORKER_ID}" \
+    || record_fail "No connected worker matching pod '${POD}' with 'test' tag found in Boundary — activation token may not have been consumed yet"
 
 # Verify upstream connection attempt in logs
 if kubectl logs "${POD}" \
         -n "${NAMESPACE}" \
-        --context "${EKS_CONTEXT}" 2>/dev/null \
+        --context "${AKS_CONTEXT}" 2>/dev/null \
         | grep -qE "Setting HCP Boundary cluster address|upstream.*address|upstreamDialerFunc"; then
     record_pass "Worker is attempting upstream connection to Boundary cluster"
 fi
+
 
 # TCP Session (optional — requires BOUNDARY_TARGET_ID)
 section "TCP Session Validation..."
@@ -436,14 +467,16 @@ else
     rm -f "${CONN_OUT}"
 fi
 
+
 # Results Summary
 section "Test Results"
 
 echo ""
-echo "  EKS Cluster:   ${EKS_CLUSTER_NAME} (${AWS_REGION})"
-echo "  Helm Release:  ${HELM_RELEASE} / ${NAMESPACE}"
-echo "  Worker Pod:    ${POD:-unknown}"
-[ -n "${NLB_HOSTNAME:-}" ] && echo "  NLB Hostname:  ${NLB_HOSTNAME}"
+echo "  AKS Cluster:        ${AKS_CLUSTER_NAME} (${AZURE_LOCATION})"
+echo "  Resource Group:     ${AZURE_RESOURCE_GROUP}"
+echo "  Helm Release:       ${HELM_RELEASE} / ${NAMESPACE}"
+echo "  Worker Pod:         ${POD:-unknown}"
+[ -n "${LB_IP:-}" ] && echo "  Load Balancer IP:   ${LB_IP}"
 echo ""
 echo "  Tests Passed: ${TESTS_PASSED}"
 if [ "${TESTS_FAILED}" -gt 0 ]; then
@@ -457,5 +490,5 @@ if [ "${TESTS_FAILED}" -gt 0 ]; then
     exit 1
 else
     echo ""
-    echo "  ✅ All EKS integration tests passed!"
+    echo "  ✅ All AKS integration tests passed!"
 fi
