@@ -19,6 +19,7 @@
 # Optional env vars:
 #   BOUNDARY_TARGET_ID      - Target ID to validate TCP session (skipped if unset)
 #   SKIP_CLEANUP            - Set to "true" to leave resources after test
+#   SKIP_HELM_UNINSTALL     - Set to "true" to skip helm uninstall (e.g. pre-installed release)
 #   HELM_RELEASE            - Helm release name (default: boundary-worker)
 #   K8S_NAMESPACE           - Kubernetes namespace  (default: boundary)
 #   WORKER_DEPLOY           - Deployment name       (default: boundary-worker-deployment)
@@ -49,11 +50,13 @@ section() {
 : "${BOUNDARY_PASSWORD:?'BOUNDARY_PASSWORD must be set'}"
 
 SKIP_CLEANUP="${SKIP_CLEANUP:-false}"
+SKIP_HELM_UNINSTALL="${SKIP_HELM_UNINSTALL:-false}"
 HELM_RELEASE="${HELM_RELEASE:-boundary-worker}"
 NAMESPACE="${K8S_NAMESPACE:-boundary}"
 DEPLOY="${WORKER_DEPLOY:-boundary-worker-deployment}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 LB_TIMEOUT="${LB_TIMEOUT:-300}"
+WORKER_POLL_TIMEOUT="${WORKER_POLL_TIMEOUT:-120}"
 
 # AKS context is the cluster name (set by az aks get-credentials)
 AKS_CONTEXT="${AKS_CLUSTER_NAME}"
@@ -72,20 +75,27 @@ record_fail() {
 
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
 _cleanup() {
-    # Kill any background port-forward processes
-    pkill -f "kubectl port-forward.*9203" 2>/dev/null || true
+    # Kill any background port-forward processes started by this script
+    if [[ -n "${PF_PID:-}" ]] && kill -0 "${PF_PID}" 2>/dev/null; then
+        kill "${PF_PID}" 2>/dev/null || true
+        wait "${PF_PID}" 2>/dev/null || true
+    fi
 
     if [[ "${SKIP_CLEANUP}" == "true" ]]; then
         warn "SKIP_CLEANUP=true — leaving namespace '${NAMESPACE}' in place"
         return
     fi
     section "Cleanup"
-    info "Uninstalling Helm release '${HELM_RELEASE}'..."
-    helm uninstall "${HELM_RELEASE}" \
-        --namespace "${NAMESPACE}" \
-        --kube-context "${AKS_CONTEXT}" \
-        --wait --timeout 5m 2>/dev/null \
-        | sed 's/^/     /' || true
+    if [[ "${SKIP_HELM_UNINSTALL}" == "true" ]]; then
+        warn "SKIP_HELM_UNINSTALL=true — leaving Helm release '${HELM_RELEASE}' in place"
+    else
+        info "Uninstalling Helm release '${HELM_RELEASE}'..."
+        helm uninstall "${HELM_RELEASE}" \
+            --namespace "${NAMESPACE}" \
+            --kube-context "${AKS_CONTEXT}" \
+            --wait --timeout 5m 2>/dev/null \
+            | sed 's/^/     /' || true
+    fi
     kubectl delete namespace "${NAMESPACE}" \
         --context "${AKS_CONTEXT}" \
         --ignore-not-found 2>/dev/null \
@@ -359,13 +369,23 @@ AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" \
     || warn "Auth storage empty — worker may not have completed enrollment yet"
 
 # Confirm worker record in Boundary
-WORKERS_JSON=$(boundary workers list \
-    -scope-id global \
-    -addr "${BOUNDARY_ADDR}" \
-    -token env://BOUNDARY_TOKEN \
-    -format json 2>&1) || fail "Failed to list workers: ${WORKERS_JSON}"
+# For controller-led workers the worker name in Boundary is a Boundary-assigned
+# identifier set at 'boundary workers create controller-led' time — it is NOT
+# derived from the pod hostname.  Match only on the 'test' tag and a non-empty
+# address (i.e. the worker is connected), consistent with the EKS test.
+# Poll until the worker appears or WORKER_POLL_TIMEOUT is reached.
+REGISTERED_WORKER_ID=""
+WORKER_ELAPSED=0
+WORKER_INTERVAL=15
+info "Polling Boundary for connected worker with 'test' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
+while [ "${WORKER_ELAPSED}" -lt "${WORKER_POLL_TIMEOUT}" ]; do
+    WORKERS_JSON=$(boundary workers list \
+        -scope-id global \
+        -addr "${BOUNDARY_ADDR}" \
+        -token env://BOUNDARY_TOKEN \
+        -format json 2>&1) || { warn "Failed to list workers (retrying)"; sleep "${WORKER_INTERVAL}"; WORKER_ELAPSED=$((WORKER_ELAPSED + WORKER_INTERVAL)); continue; }
 
-REGISTERED_WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
+    REGISTERED_WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for w in data.get('items', []):
@@ -375,9 +395,15 @@ for w in data.get('items', []):
         break
 " 2>/dev/null || true)
 
+    if [ -n "${REGISTERED_WORKER_ID}" ]; then break; fi
+    info "Worker not yet visible in Boundary (${WORKER_ELAPSED}s elapsed), retrying in ${WORKER_INTERVAL}s..."
+    sleep "${WORKER_INTERVAL}"
+    WORKER_ELAPSED=$((WORKER_ELAPSED + WORKER_INTERVAL))
+done
+
 [ -n "${REGISTERED_WORKER_ID}" ] \
-    && record_pass "Worker registered in Boundary: ${REGISTERED_WORKER_ID}" \
-    || record_fail "No worker with 'test' tag found in Boundary — activation token may not have been consumed yet"
+    && record_pass "Worker registered in Boundary (pod=${POD}): ${REGISTERED_WORKER_ID}" \
+    || record_fail "No connected worker matching pod '${POD}' with 'test' tag found in Boundary — activation token may not have been consumed yet"
 
 # Verify upstream connection attempt in logs
 if kubectl logs "${POD}" \

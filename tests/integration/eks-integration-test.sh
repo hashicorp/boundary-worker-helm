@@ -52,6 +52,7 @@ NAMESPACE="${K8S_NAMESPACE:-boundary}"
 DEPLOY="${WORKER_DEPLOY:-boundary-worker-deployment}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 NLB_TIMEOUT="${NLB_TIMEOUT:-300}"
+WORKER_POLL_TIMEOUT="${WORKER_POLL_TIMEOUT:-120}"
 
 # Overall test tracking
 TESTS_PASSED=0
@@ -342,13 +343,19 @@ AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" \
     || warn "Auth storage empty — worker may not have completed enrollment yet"
 
 # Confirm worker record in Boundary
-WORKERS_JSON=$(boundary workers list \
-    -scope-id global \
-    -addr "${BOUNDARY_ADDR}" \
-    -token env://BOUNDARY_TOKEN \
-    -format json 2>&1) || fail "Failed to list workers: ${WORKERS_JSON}"
+# Poll until the worker appears or WORKER_POLL_TIMEOUT is reached.
+REGISTERED_WORKER_ID=""
+WORKER_ELAPSED=0
+WORKER_INTERVAL=15
+info "Polling Boundary for registered worker with 'test' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
+while [ "${WORKER_ELAPSED}" -lt "${WORKER_POLL_TIMEOUT}" ]; do
+    WORKERS_JSON=$(boundary workers list \
+        -scope-id global \
+        -addr "${BOUNDARY_ADDR}" \
+        -token env://BOUNDARY_TOKEN \
+        -format json 2>&1) || { warn "Failed to list workers (retrying)"; sleep "${WORKER_INTERVAL}"; WORKER_ELAPSED=$((WORKER_ELAPSED + WORKER_INTERVAL)); continue; }
 
-REGISTERED_WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
+    REGISTERED_WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for w in data.get('items', []):
@@ -357,6 +364,12 @@ for w in data.get('items', []):
         print(w.get('id', ''))
         break
 " 2>/dev/null || true)
+
+    if [ -n "${REGISTERED_WORKER_ID}" ]; then break; fi
+    info "Worker not yet visible in Boundary (${WORKER_ELAPSED}s elapsed), retrying in ${WORKER_INTERVAL}s..."
+    sleep "${WORKER_INTERVAL}"
+    WORKER_ELAPSED=$((WORKER_ELAPSED + WORKER_INTERVAL))
+done
 
 [ -n "${REGISTERED_WORKER_ID}" ] \
     && record_pass "Worker registered in Boundary: ${REGISTERED_WORKER_ID}" \
