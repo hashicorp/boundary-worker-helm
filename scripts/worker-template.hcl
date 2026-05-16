@@ -19,7 +19,7 @@ worker {
   tags {
     type = ["worker", "egress"]
   }
-
+  
   controller_generated_activation_token = "<activation-token>"
 }
 

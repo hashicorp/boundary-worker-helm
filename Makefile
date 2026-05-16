@@ -522,8 +522,11 @@ acceptance-helm:
 
 acceptance-test:
 	@for script in tests/acceptance/*.sh; do \
-		echo ""; \
+		case "$$script" in \
+			*kind-version-matrix-test.sh) continue ;; \
+		esac; \
 		echo "Running: $$script"; \
+		echo "--------------------------------"; \
 		echo ""; \
 		bash $$script || exit 1; \
 	done

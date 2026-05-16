@@ -228,8 +228,14 @@ install_helm_chart() {
     # so the preloaded image is the one actually deployed.
     local image_flags=()
     if [ -n "${BOUNDARY_BYOW_IMAGE:-}" ]; then
+        if [[ "${BOUNDARY_BYOW_IMAGE}" != *:* ]]; then
+            fail "BOUNDARY_BYOW_IMAGE must be in repo:tag format, got: ${BOUNDARY_BYOW_IMAGE}"
+        fi
         local img_repo="${BOUNDARY_BYOW_IMAGE%:*}"
         local img_tag="${BOUNDARY_BYOW_IMAGE##*:}"
+        if [ -z "${img_repo}" ] || [ -z "${img_tag}" ]; then
+            fail "BOUNDARY_BYOW_IMAGE must be in repo:tag format, got: ${BOUNDARY_BYOW_IMAGE}"
+        fi
         image_flags=(--set "image.repository=${img_repo}" --set "image.tag=${img_tag}")
         info "Using image override: ${BOUNDARY_BYOW_IMAGE}"
     fi
@@ -255,7 +261,7 @@ install_helm_chart() {
 
     # Verify at least one pod was scheduled before handing off to the TCP test
     info "Verifying worker pod was scheduled..."
-    for i in $(seq 1 30); do
+    for ((i=1; i<=30; i++)); do
         POD_COUNT=$(kubectl get pods \
             -n boundary \
             --context "kind-${KIND_CLUSTER_NAME}" \
