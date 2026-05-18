@@ -521,22 +521,9 @@ acceptance-helm:
 	@echo "To view logs during test execution, run: kubectl logs -n boundary -l app.kubernetes.io/component=test --follow"
 
 acceptance-test:
-	@for script in tests/acceptance/*.sh; do \
-		case "$$script" in \
-			*kind-version-matrix-test.sh) continue ;; \
-		esac; \
-		echo ""; \
-		echo "Running: $$script"; \
-		echo "--------------------------------"; \
-		echo ""; \
-		bash $$script || exit 1; \
-	done
-	@echo ""
-	@echo "Running: tests/acceptance/kind-version-matrix-test.sh"
-	@echo "--------------------------------"
-	@echo ""
-	@bash tests/acceptance/kind-version-matrix-test.sh || exit 1
-	@echo ""
+@bash tests/acceptance/cluster-smoke-test.sh
+@bash tests/acceptance/tcp-target-conn-test.sh
+@bash tests/acceptance/kind-version-matrix-test.sh
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
 
