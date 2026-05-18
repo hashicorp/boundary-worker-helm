@@ -38,12 +38,7 @@ _FALLBACK_KIND_VERSIONS=("v0.30.0" "v0.29.0")
 # recently released prior versions without any manual edits.
 resolve_kind_versions() {
     local raw
-    local -a auth_header=()
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
-        auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-    fi
     raw="$(curl -fsSL --retry 2 --connect-timeout 10 \
-        "${auth_header[@]+"${auth_header[@]}"}" \
         "https://api.github.com/repos/kubernetes-sigs/kind/releases" 2>/dev/null)" || true
 
     if [ -z "${raw}" ]; then
