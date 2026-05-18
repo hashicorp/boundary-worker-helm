@@ -521,9 +521,9 @@ acceptance-helm:
 	@echo "To view logs during test execution, run: kubectl logs -n boundary -l app.kubernetes.io/component=test --follow"
 
 acceptance-test:
-@bash tests/acceptance/cluster-smoke-test.sh
-@bash tests/acceptance/tcp-target-conn-test.sh
-@bash tests/acceptance/kind-version-matrix-test.sh
+	@bash tests/acceptance/cluster-smoke-test.sh
+	@bash tests/acceptance/tcp-target-conn-test.sh
+	@bash tests/acceptance/kind-version-matrix-test.sh
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
 
