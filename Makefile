@@ -525,11 +525,17 @@ acceptance-test:
 		case "$$script" in \
 			*kind-version-matrix-test.sh) continue ;; \
 		esac; \
+		echo ""; \
 		echo "Running: $$script"; \
 		echo "--------------------------------"; \
 		echo ""; \
 		bash $$script || exit 1; \
 	done
+	@echo ""
+	@echo "Running: tests/acceptance/kind-version-matrix-test.sh"
+	@echo "--------------------------------"
+	@echo ""
+	@bash tests/acceptance/kind-version-matrix-test.sh || exit 1
 	@echo ""
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
@@ -590,6 +596,10 @@ acceptance-cleanup:
 	else \
 		echo "⚠️  Acceptance cluster does not exist"; \
 	fi
+	@find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'kind-v[0-9]*' 2>/dev/null | while read -r BIN; do \
+		rm -f "$$BIN"; \
+		echo "✅ Removed cached $$(basename $$BIN) binary"; \
+	done
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
 

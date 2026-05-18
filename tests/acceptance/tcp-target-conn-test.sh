@@ -145,7 +145,7 @@ if [ -n "${OPS_STATUS}" ] && [ "${OPS_STATUS}" != "000" ]; then
     info "Worker ops health endpoint responded with HTTP ${OPS_STATUS}"
     pass "Worker ops health endpoint is reachable"
 else
-    warn "Ops health endpoint /health on port 9203 did not respond — port-forward may have failed; skipping ops check"
+    fail "Ops health endpoint /health on port 9203 did not respond — worker is not healthy"
 fi
 echo ""
 
