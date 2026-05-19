@@ -19,6 +19,7 @@
 #
 # Optional env vars:
 #   BOUNDARY_TARGET_ID      - Target ID to validate TCP session (skipped if unset)
+#   BOUNDARY_WORKER_TAG     - Worker type tag to match in Boundary (default: worker)
 #   SKIP_CLEANUP            - Set to "true" to leave resources after test
 #   SKIP_HELM_UNINSTALL     - Set to "true" to skip helm uninstall
 #   HELM_RELEASE            - Helm release name (default: boundary-worker)
@@ -58,6 +59,7 @@ DEPLOY="${WORKER_DEPLOY:-boundary-worker-deployment}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 LB_TIMEOUT="${LB_TIMEOUT:-300}"
 WORKER_POLL_TIMEOUT="${WORKER_POLL_TIMEOUT:-120}"
+BOUNDARY_WORKER_TAG="${BOUNDARY_WORKER_TAG:-worker}"
 STORAGE_CLASS="${TF_STORAGE_CLASS_NAME:-standard-rwo}"
 
 GKE_CONTEXT="gke_${GCP_PROJECT_ID}_${GKE_ZONE}_${GKE_CLUSTER_NAME}"
@@ -290,7 +292,7 @@ AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" --context "${GKE_CONTEXT}" 
 REGISTERED_WORKER_ID=""
 WORKER_ELAPSED=0
 WORKER_INTERVAL=15
-info "Polling Boundary for connected worker with 'test' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
+info "Polling Boundary for connected worker with '${BOUNDARY_WORKER_TAG}' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
 while [ "${WORKER_ELAPSED}" -lt "${WORKER_POLL_TIMEOUT}" ]; do
     WORKERS_JSON=$(boundary workers list -scope-id global -addr "${BOUNDARY_ADDR}" -token env://BOUNDARY_TOKEN -format json 2>/dev/null || true)
 
@@ -299,13 +301,14 @@ import json,sys
 raw=sys.stdin.read().strip()
 if not raw:
     raise SystemExit(0)
+tag=sys.argv[1]
 data=json.loads(raw)
 for w in data.get("items", []):
     tags=w.get("canonical_tags", {}).get("type", [])
-    if "test" in tags and w.get("address"):
+    if tag in tags and w.get("address"):
         print(w.get("id", ""))
         break
-' 2>/dev/null || true)
+' "${BOUNDARY_WORKER_TAG}" 2>/dev/null || true)
 
     if [ -n "${REGISTERED_WORKER_ID}" ]; then
         break
@@ -318,7 +321,7 @@ done
 
 [ -n "${REGISTERED_WORKER_ID}" ] \
     && record_pass "Worker registered in Boundary: ${REGISTERED_WORKER_ID}" \
-    || record_fail "No connected worker with 'test' tag found in Boundary"
+    || record_fail "No connected worker with '${BOUNDARY_WORKER_TAG}' tag found in Boundary"
 
 section "TCP Session Validation"
 if [ -z "${BOUNDARY_TARGET_ID:-}" ]; then
