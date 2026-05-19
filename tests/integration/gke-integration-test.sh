@@ -30,10 +30,11 @@
 
 set -euo pipefail
 
-pass()    { echo "     [PASS] $1"; }
-fail()    { echo "  [FAIL] $1"; exit 1; }
-info()    { echo "     [INFO] $1"; }
-warn()    { echo "     [WARN] $1"; }
+pass()   { echo "   ✅ $1" >&2; }
+fail()   { echo "❌ FAILED: $1" >&2; exit 1; }
+info()   { echo "   $1" >&2; }
+warn()   { echo "⚠️  WARN: $1" >&2; }
+
 section() {
     echo ""
     echo "  > $1"
