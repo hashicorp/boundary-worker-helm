@@ -9,7 +9,7 @@ The chart includes several layers of test coverage:
 - **Unit Tests**: Helm template rendering validation using `helm-unittest`
 - **Helm Tests**: In-cluster smoke hooks run with `helm test`
 - **Acceptance Tests**: Local KIND cluster tests that validate end-to-end worker functionality
-- **Integration Tests**: Cloud provider tests against EKS (AWS) and AKS (Azure)
+- **Integration Tests**: Cloud provider tests against EKS (AWS) , GKE (GCP) and AKS (Azure)
 
 ## Prerequisites
 
@@ -219,15 +219,21 @@ This runs the complete sequence: `acceptance-setup` → `worker-config` → `acc
 
 ### Cleanup
 
+Remove the KIND cluster and Helm release:
+
 ```bash
 make acceptance-cleanup
 ```
 
-To also remove cached KIND binaries:
+This deletes the `acceptance` KIND cluster and uninstalls the Helm release, but preserves cached KIND binaries in `/tmp` for faster subsequent test runs.
+
+To also remove cached KIND binaries (used by the matrix test):
 
 ```bash
 make kind-matrix-cleanup
 ```
+
+This removes all downloaded KIND version binaries from `/tmp/kind-v*`. Use this when you want a completely clean state or to free up disk space.
 
 ---
 
