@@ -26,10 +26,16 @@ The chart does not manage controller resources, Boundary scopes, worker resource
 - [Common Deployment Patterns](#common-deployment-patterns)
 - [Configuration Reference](#configuration-reference)
 - [Operations](#operations)
+- [Monitoring](#monitoring)
 - [Security Model](#security-model)
 - [Repository Layout](#repository-layout)
 - [Known Limitations](#known-limitations)
 - [Contributing](#contributing)
+
+Additional documentation:
+
+- [docs/TESTING.md](docs/TESTING.md) — unit, acceptance, and integration test guide
+- [docs/FAQ.md](docs/FAQ.md) — frequently asked questions and troubleshooting
 
 ## Overview
 
@@ -580,6 +586,75 @@ helm uninstall boundary-worker -n boundary
 
 By default, the pod receives a `SIGTERM` and has the configured grace period to shut down. Because the chart runs a single replica, upgrades and deletes can interrupt in-flight sessions.
 
+## Monitoring
+
+The worker exposes an ops listener at port 9203. The ops Service (`boundary-worker-ops`) defaults to `ClusterIP`, so it is not reachable outside the cluster without port-forwarding.
+
+### Health check
+
+```bash
+kubectl port-forward -n boundary svc/boundary-worker-ops 9203:9203
+curl http://localhost:9203/health
+```
+
+### Prometheus metrics
+
+Metrics are available at the `/metrics` path on the ops listener:
+
+```bash
+kubectl port-forward -n boundary svc/boundary-worker-ops 9203:9203
+curl http://localhost:9203/metrics
+```
+
+To scrape metrics with Prometheus, add a `ServiceMonitor` (if using the Prometheus Operator):
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: boundary-worker
+  namespace: boundary
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: boundary-worker
+      app.kubernetes.io/component: worker
+  endpoints:
+    - port: ops
+      path: /metrics
+      interval: 30s
+```
+
+### Structured event logging
+
+The default `worker.config` emits all event types to stderr in CloudEvents JSON format:
+
+```hcl
+events {
+  audit_enabled       = true
+  sysevents_enabled   = true
+  observations_enable = true
+  sink "stderr" {
+    name        = "all-events"
+    event_types = ["*"]
+    format      = "cloudevents-json"
+  }
+}
+```
+
+Filter by event type using `jq`:
+
+```bash
+kubectl logs -n boundary deployment/boundary-worker-deployment \
+  | jq 'select(.type | startswith("audit"))'
+```
+
+### Checking resource usage
+
+```bash
+kubectl top pod -n boundary -l app.kubernetes.io/name=boundary-worker
+```
+
 ## Security Model
 
 The chart runs the worker with restricted Kubernetes security settings:
@@ -603,10 +678,14 @@ Operational implications:
 ```text
 .
 ├── Chart.yaml
+├── CHANGELOG.md
 ├── README.md
 ├── values.yaml
-├── example-config/
+├── docs/
+│   ├── FAQ.md
+│   └── TESTING.md
 ├── scripts/
+│   └── worker-template.hcl
 ├── templates/
 │   ├── _helpers.tpl
 │   ├── NOTES.txt
@@ -617,18 +696,37 @@ Operational implications:
 │   └── tests/
 └── tests/
 		├── acceptance/
+		│   ├── cluster-smoke-test.sh
+		│   ├── kind-acceptance-config.yaml
+		│   ├── kind-version-matrix-test.sh
+		│   └── tcp-target-conn-test.sh
+		├── integration/
+		│   ├── aks-integration-test.sh
+		│   └── eks-integration-test.sh
 		└── unit/
+				├── helpers_test.yaml
+				├── worker-configmap_test.yaml
+				├── worker-deployment_test.yaml
+				├── worker-pvc_test.yaml
+				└── worker-service_test.yaml
 ```
 
 Key files:
 
 - `values.yaml`: default chart values
+- `scripts/worker-template.hcl`: starter HCL template for generating `worker.hcl`
 - `templates/worker-deployment.yaml`: single-replica worker Deployment
 - `templates/worker-service.yaml`: proxy and ops Services
 - `templates/worker-pvc.yaml`: auth and recording PVCs
 - `templates/worker-configmap.yaml`: mounted worker HCL configuration
-- `tests/unit/*_test.yaml`: Helm unit tests
-- `tests/acceptance/acceptance-test.sh`: acceptance script scaffold
+- `templates/tests/`: Helm test hooks run by `helm test`
+- `tests/unit/*_test.yaml`: Helm unit tests run with `helm-unittest`
+- `tests/acceptance/cluster-smoke-test.sh`: validates a KIND cluster is up and accessible
+- `tests/acceptance/tcp-target-conn-test.sh`: end-to-end session and TCP connection test
+- `tests/acceptance/kind-version-matrix-test.sh`: runs `tcp-target-conn-test.sh` across multiple KIND versions
+- `tests/integration/`: EKS and AKS integration tests
+- `docs/TESTING.md`: full testing guide
+- `docs/FAQ.md`: frequently asked questions
 
 ## Known Limitations
 
