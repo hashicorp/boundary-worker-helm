@@ -120,11 +120,10 @@ gcloud config set project "${GCP_PROJECT_ID}" >/dev/null 2>&1 \
 
 section "GKE Cluster Accessibility"
 info "Fetching kubeconfig for cluster '${GKE_CLUSTER_NAME}'..."
-gcloud container clusters get-credentials "${GKE_CLUSTER_NAME}" \
+GET_CREDS_OUT=$(gcloud container clusters get-credentials "${GKE_CLUSTER_NAME}" \
     --zone "${GKE_ZONE}" \
-    --region "${GCP_REGION}" \
-    --project "${GCP_PROJECT_ID}" >/dev/null 2>&1 \
-    || fail "Failed to fetch credentials for '${GKE_CLUSTER_NAME}'"
+    --project "${GCP_PROJECT_ID}" 2>&1) \
+    || fail "Failed to fetch credentials for '${GKE_CLUSTER_NAME}': ${GET_CREDS_OUT}"
 
 kubectl cluster-info --context "${GKE_CONTEXT}" >/dev/null 2>&1 \
     && record_pass "GKE cluster '${GKE_CLUSTER_NAME}' is accessible" \

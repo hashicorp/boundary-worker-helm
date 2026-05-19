@@ -999,7 +999,6 @@ gke-helm:
 	@echo "Updating kubeconfig for cluster $${GKE_CLUSTER_NAME}..."; \
 	gcloud container clusters get-credentials "$${GKE_CLUSTER_NAME}" \
 		--zone "$${GKE_ZONE}" \
-		--region "$${GCP_REGION}" \
 		--project "$${GCP_PROJECT_ID}"; \
 	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-standard-rwo}"; \
@@ -1063,7 +1062,6 @@ gke-cleanup:
 	done
 	@gcloud container clusters get-credentials "$${GKE_CLUSTER_NAME}" \
 		--zone "$${GKE_ZONE}" \
-		--region "$${GCP_REGION}" \
 		--project "$${GCP_PROJECT_ID}" >/dev/null 2>&1 || true; \
 	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
 	if helm status boundary-worker -n boundary --kube-context "$${GKE_CONTEXT}" >/dev/null 2>&1; then \
