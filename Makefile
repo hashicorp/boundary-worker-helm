@@ -13,6 +13,7 @@ endif
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: kind-matrix-test kind-matrix-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
@@ -50,6 +51,8 @@ help:
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
+	@echo "  make kind-matrix-test      - Run tcp-target-conn-test.sh across the 2 KIND versions prior to latest (auto-resolved)"
+	@echo "  make kind-matrix-cleanup   - Delete the acceptance cluster and cached KIND binaries"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
@@ -160,14 +163,17 @@ setup-helm-unittest:
 
 setup-helm:
 	@echo "Installing Helm..."
-	@curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+	@curl -fsSL -o /tmp/get-helm-3.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+	@chmod +x /tmp/get-helm-3.sh
+	@/tmp/get-helm-3.sh
 	@helm version
 	@echo "✅ Helm installed"
 
 setup-kubeconform:
 	@echo "Installing Kubeconform..."
-	@curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-	@sudo mv kubeconform /usr/local/bin/
+	@curl -fsSL -o /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+	@tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+	@sudo mv /tmp/kubeconform /usr/local/bin/
 	@kubeconform -v
 	@echo "✅ Kubeconform installed"
 
@@ -177,13 +183,15 @@ setup-trivy:
 	@wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
 	@echo "deb https://aquasecurity.github.io/trivy-repo/deb $$(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
 	@sudo apt-get update
-	sudo apt-get install -y trivy
+	@sudo apt-get install -y trivy
 	@trivy --version
 	@echo "✅ Trivy installed"
 
 setup-kubescape:
 	@echo "Installing Kubescape..."
-	@curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash
+	@curl -fsSL -o /tmp/kubescape-install.sh https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh
+	@chmod +x /tmp/kubescape-install.sh
+	@/tmp/kubescape-install.sh
 	@export PATH=$$PATH:$$HOME/.kubescape/bin && \
 		sudo cp $$HOME/.kubescape/bin/kubescape /usr/local/bin/ && \
 		kubescape version
@@ -250,7 +258,11 @@ kubescape-scan:
 		--format json \
 		--output kubescape-output.json \
 		--exceptions ./kubescape-exceptions.json \
-		--verbose || true
+		--verbose; KUBESCAPE_EXIT=$$?; \
+	if [ $$KUBESCAPE_EXIT -ne 0 ] && [ ! -f kubescape-output.json ]; then \
+		echo "❌ Kubescape failed to run (exit code: $$KUBESCAPE_EXIT)"; \
+		exit $$KUBESCAPE_EXIT; \
+	fi
 	@echo ""
 	@echo "================================"
 	@echo "Kubescape Scan Results"
@@ -509,13 +521,9 @@ acceptance-helm:
 	@echo "To view logs during test execution, run: kubectl logs -n boundary -l app.kubernetes.io/component=test --follow"
 
 acceptance-test:
-	@for script in tests/acceptance/*.sh; do \
-		echo ""; \
-		echo "Running: $$script"; \
-		echo ""; \
-		bash $$script || exit 1; \
-	done
-	@echo ""
+	@bash tests/acceptance/cluster-smoke-test.sh
+	@bash tests/acceptance/tcp-target-conn-test.sh
+	@bash tests/acceptance/kind-version-matrix-test.sh
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
 
@@ -537,6 +545,33 @@ acceptance-full:
 	@echo "To cleanup, run: make acceptance-cleanup"
 	@echo ""
 
+# ================================
+# KIND Version Matrix Testing
+# ================================
+
+kind-matrix-test:
+	@echo "================================"
+	@echo "KIND Version Matrix Test"
+	@echo "Versions: resolved dynamically from GitHub Releases"
+	@echo "================================"
+	@chmod +x tests/acceptance/kind-version-matrix-test.sh
+	@bash tests/acceptance/kind-version-matrix-test.sh
+
+kind-matrix-cleanup:
+	@echo "================================"
+	@echo "KIND Matrix Cleanup"
+	@echo "================================"
+	@find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'kind-v[0-9]*' 2>/dev/null | while read -r BIN; do \
+		if [ -x "$$BIN" ] && "$$BIN" get clusters 2>/dev/null | grep -q "^acceptance$$"; then \
+			echo "Deleting cluster using $$(basename $$BIN) binary..."; \
+			"$$BIN" delete cluster --name acceptance; \
+		fi; \
+		rm -f "$$BIN"; \
+		echo "✅ Removed cached $$(basename $$BIN) binary"; \
+	done
+	@rm -f worker.hcl
+	@echo "✅ KIND matrix cleanup complete"
+
 acceptance-cleanup:
 	@echo "================================"
 	@echo "Cleaning up Acceptance Cluster"
@@ -548,6 +583,10 @@ acceptance-cleanup:
 	else \
 		echo "⚠️  Acceptance cluster does not exist"; \
 	fi
+	@find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'kind-v[0-9]*' 2>/dev/null | while read -r BIN; do \
+		rm -f "$$BIN"; \
+		echo "✅ Removed cached $$(basename $$BIN) binary"; \
+	done
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
 

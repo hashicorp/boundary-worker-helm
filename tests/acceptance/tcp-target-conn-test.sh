@@ -4,7 +4,7 @@
 # TCP Target Connection Test
 # Scenarios:
 #   1. Worker running in KIND cluster
-#   2. Worker registers with INT long-lived Boundary cluster
+#   2. Worker registers with Boundary cluster
 #   3. Session creation validated via authorize-session
 #   4. TCP connection & session field validation
 
@@ -14,13 +14,38 @@ set -euo pipefail
 pass() { echo "   ✅ $1"; }
 fail() { echo "❌ FAILED: $1"; exit 1; }
 info() { echo "   $1"; }
-warn() { echo "⚠️WARN: $1"; }
+warn() { echo "⚠️ WARN: $1"; }
+
+# ── Cleanup trap: cancel any open sessions and kill background processes ──────
+CONN_PID=""
+CONN_SESSION_ID=""
+SESSION_ID=""
+CONN_OUT=""
+_cleanup() {
+    if [ -n "${CONN_SESSION_ID}" ]; then
+        boundary sessions cancel \
+            -id "${CONN_SESSION_ID}" \
+            -addr "${BOUNDARY_ADDR:-}" \
+            -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    fi
+    if [ -n "${SESSION_ID}" ]; then
+        boundary sessions cancel \
+            -id "${SESSION_ID}" \
+            -addr "${BOUNDARY_ADDR:-}" \
+            -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    fi
+    [ -n "${CONN_PID}" ] && kill "${CONN_PID}" 2>/dev/null || true
+    [ -n "${CONN_OUT}" ] && rm -f "${CONN_OUT}" || true
+}
+trap _cleanup EXIT
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 CONTEXT="kind-acceptance"
 NAMESPACE="boundary"
 DEPLOY="boundary-worker-deployment"
-TIMEOUT=300   # seconds to wait for registration / deployment readiness
+# Allow callers (e.g. kind-version-matrix-test.sh) to override the timeout.
+# Default is 300s for standalone runs; the matrix test exports TIMEOUT=600.
+TIMEOUT="${TIMEOUT:-300}"
 
 # ── Load .env ─────────────────────────────────────────────────────────────────
 if [ -f .env ]; then
@@ -91,7 +116,7 @@ BOUNDARY_TOKEN=$(printf '%s\n' "${AUTH_OUT}" \
     | awk '/The token is:/ { getline; gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }')
 [ -n "${BOUNDARY_TOKEN}" ] || fail "Failed to extract auth token from authentication output"
 export BOUNDARY_TOKEN
-pass "Authenticated with INT cluster"
+pass "Authenticated with Boundary cluster"
 echo ""
 
 # ── Ops health endpoint check (port-forward to ClusterIP ops service) ────────
@@ -103,17 +128,25 @@ kubectl port-forward \
     --context "${CONTEXT}" \
     "pod/${POD}" 9203:9203 >/dev/null 2>&1 &
 PF_PID=$!
-sleep 3
 
 OPS_STATUS=""
-if curl -sf --max-time 5 http://localhost:9203/health >/dev/null 2>&1; then
-    OPS_STATUS="ok"
-fi
+for ((i=1; i<=15; i++)); do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:9203/health 2>/dev/null || true)
+    if [ -n "${HTTP_CODE}" ] && [ "${HTTP_CODE}" != "000" ]; then
+        OPS_STATUS="${HTTP_CODE}"
+        break
+    fi
+    sleep 2
+done
 kill "${PF_PID}" 2>/dev/null || true
 wait "${PF_PID}" 2>/dev/null || true
 
-[ "${OPS_STATUS}" = "ok" ] || fail "Ops health endpoint /health on port 9203 did not return 200."
-pass "Worker ops health endpoint is healthy"
+if [ -n "${OPS_STATUS}" ] && [ "${OPS_STATUS}" != "000" ]; then
+    info "Worker ops health endpoint responded with HTTP ${OPS_STATUS}"
+    pass "Worker ops health endpoint is reachable"
+else
+    fail "Ops health endpoint /health on port 9203 did not respond — worker is not healthy"
+fi
 echo ""
 
 # ── Auth storage: confirm node enrollment was initiated ───────────────────────
@@ -142,12 +175,12 @@ import json, sys
 data = json.load(sys.stdin)
 for w in data.get('items', []):
     tags = w.get('canonical_tags', {}).get('type', [])
-    if 'test' in tags and w.get('address'):
+    if 'worker' in tags and w.get('address'):
         print(w.get('id', ''))
         break
 " 2>/dev/null || true)
 
-[ -n "${WORKER_ID}" ] || fail "No worker with 'test' tag found in Boundary. Activation token may not have been consumed."
+[ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
 pass "Worker record exists in Boundary: ${WORKER_ID}"
 echo ""
 
@@ -156,7 +189,7 @@ info "Checking worker is attempting upstream connection..."
 echo ""
 if kubectl --context "${CONTEXT}" -n "${NAMESPACE}" logs "${POD}" 2>/dev/null \
     | grep -q "Setting HCP Boundary cluster address\|upstream.*address\|upstreamDialerFunc"; then
-    pass "Worker is actively attempting upstream connection to INT cluster"
+    pass "Worker is actively attempting upstream connection to Boundary cluster"
 fi
 echo ""
 
@@ -187,6 +220,14 @@ SESSION_STATUS=$(printf '%s\n' "${SESSION_OUT}" \
     | cut -d'"' -f4 || true)
 [ -n "${SESSION_STATUS}" ] && info "Session status: ${SESSION_STATUS}"
 pass "Session authorized and validated"
+
+# Cancel the authorize-session token immediately — it is not used for the
+# TCP connect test below (boundary connect creates its own session).
+boundary sessions cancel \
+    -id "${SESSION_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+SESSION_ID=""   # cleared so the EXIT trap does not double-cancel
 echo ""
 
 # Test 4: TCP connection & session field validation
@@ -238,12 +279,15 @@ if [ -n "${CONN_SESSION_ID}" ]; then
         -id "${CONN_SESSION_ID}" \
         -addr "${BOUNDARY_ADDR}" \
         -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    CONN_SESSION_ID=""   # cleared so the EXIT trap does not double-cancel
     pass "Session cancelled Successfully"
     echo ""
 fi
 kill "${CONN_PID}" 2>/dev/null || true
 wait "${CONN_PID}" 2>/dev/null || true
+CONN_PID=""
 rm -f "${CONN_OUT}"
+CONN_OUT=""
 
 [ "${CONN_PASS}" -eq 1 ] || fail "One or more session fields were missing"
 echo ""

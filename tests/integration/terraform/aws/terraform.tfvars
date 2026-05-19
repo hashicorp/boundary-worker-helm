@@ -1,3 +1,5 @@
+# Copyright IBM Corp. 2026
+
 # Values are supplied via environment variables using the TF_VAR_* convention,
 # or via the Makefile -var= flags (which read from the .env file at the repo root).
 # Variables not set here fall back to the defaults defined in variables.tf.
