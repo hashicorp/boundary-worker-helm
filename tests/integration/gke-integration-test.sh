@@ -380,3 +380,4 @@ fi
 
 echo ""
 echo "  [PASS] All GKE integration tests passed"
+
