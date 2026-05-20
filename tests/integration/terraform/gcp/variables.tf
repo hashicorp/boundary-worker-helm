@@ -3,7 +3,6 @@
 variable "project_id" {
   description = "GCP project ID where test resources will be created."
   type        = string
-  default     = "hc-55213f8eceb746cda94fac0a8aa"
 }
 variable "region" {
   description = "GCP region used by the Google provider for test resources."
