@@ -18,6 +18,7 @@
 #
 # Optional env vars:
 #   BOUNDARY_TARGET_ID      - Target ID to validate TCP session (skipped if unset)
+#   BOUNDARY_WORKER_TAG     - Worker type tag to match in Boundary (default: worker)
 #   SKIP_CLEANUP            - Set to "true" to leave resources after test
 #   SKIP_HELM_UNINSTALL     - Set to "true" to skip helm uninstall (e.g. pre-installed release)
 #   HELM_RELEASE            - Helm release name (default: boundary-worker)
@@ -57,6 +58,7 @@ DEPLOY="${WORKER_DEPLOY:-boundary-worker-deployment}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 LB_TIMEOUT="${LB_TIMEOUT:-300}"
 WORKER_POLL_TIMEOUT="${WORKER_POLL_TIMEOUT:-120}"
+BOUNDARY_WORKER_TAG="${BOUNDARY_WORKER_TAG:-worker}"
 
 # AKS context is the cluster name (set by az aks get-credentials)
 AKS_CONTEXT="${AKS_CLUSTER_NAME}"
@@ -371,13 +373,13 @@ AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" \
 # Confirm worker record in Boundary
 # For controller-led workers the worker name in Boundary is a Boundary-assigned
 # identifier set at 'boundary workers create controller-led' time — it is NOT
-# derived from the pod hostname.  Match only on the 'test' tag and a non-empty
-# address (i.e. the worker is connected), consistent with the EKS test.
+# derived from the pod hostname.  Match only on the BOUNDARY_WORKER_TAG and a
+# non-empty address (i.e. the worker is connected), consistent with the EKS test.
 # Poll until the worker appears or WORKER_POLL_TIMEOUT is reached.
 REGISTERED_WORKER_ID=""
 WORKER_ELAPSED=0
 WORKER_INTERVAL=15
-info "Polling Boundary for connected worker with 'test' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
+info "Polling Boundary for connected worker with '${BOUNDARY_WORKER_TAG}' tag (timeout: ${WORKER_POLL_TIMEOUT}s)..."
 while [ "${WORKER_ELAPSED}" -lt "${WORKER_POLL_TIMEOUT}" ]; do
     WORKERS_JSON=$(boundary workers list \
         -scope-id global \
@@ -385,15 +387,16 @@ while [ "${WORKER_ELAPSED}" -lt "${WORKER_POLL_TIMEOUT}" ]; do
         -token env://BOUNDARY_TOKEN \
         -format json 2>&1) || { warn "Failed to list workers (retrying)"; sleep "${WORKER_INTERVAL}"; WORKER_ELAPSED=$((WORKER_ELAPSED + WORKER_INTERVAL)); continue; }
 
-    REGISTERED_WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
+    REGISTERED_WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
-for w in data.get('items', []):
-    tags = w.get('canonical_tags', {}).get('type', [])
-    if 'test' in tags and w.get('address'):
-        print(w.get('id', ''))
+tag = sys.argv[1]
+for w in data.get("items", []):
+    tags = w.get("canonical_tags", {}).get("type", [])
+    if tag in tags and w.get("address"):
+        print(w.get("id", ""))
         break
-" 2>/dev/null || true)
+' "${BOUNDARY_WORKER_TAG}" 2>/dev/null || true)
 
     if [ -n "${REGISTERED_WORKER_ID}" ]; then break; fi
     info "Worker not yet visible in Boundary (${WORKER_ELAPSED}s elapsed), retrying in ${WORKER_INTERVAL}s..."
@@ -403,7 +406,7 @@ done
 
 [ -n "${REGISTERED_WORKER_ID}" ] \
     && record_pass "Worker registered in Boundary (pod=${POD}): ${REGISTERED_WORKER_ID}" \
-    || record_fail "No connected worker matching pod '${POD}' with 'test' tag found in Boundary — activation token may not have been consumed yet"
+    || record_fail "No connected worker matching pod '${POD}' with '${BOUNDARY_WORKER_TAG}' tag found in Boundary — activation token may not have been consumed yet"
 
 # Verify upstream connection attempt in logs
 if kubectl logs "${POD}" \

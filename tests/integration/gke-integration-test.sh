@@ -31,15 +31,15 @@
 
 set -euo pipefail
 
-pass()   { echo "   ✅ $1" >&2; }
-fail()   { echo "❌ FAILED: $1" >&2; exit 1; }
-info()   { echo "   $1" >&2; }
-warn()   { echo "⚠️  WARN: $1" >&2; }
+pass()   { echo "     ✅ $1"; }
+fail()   { echo "  ❌ FAILED: $1"; exit 1; }
+info()   { echo "     ℹ  $1"; }
+warn()   { echo "     ⚠️  $1"; }
 
 section() {
     echo ""
-    echo "  > $1"
-    echo "  $(printf '=%.0s' {1..50})"
+    echo "  ▶ $1"
+    echo "  $(printf '─%.0s' {1..50})"
 }
 
 : "${GCP_PROJECT_ID:?'GCP_PROJECT_ID must be set'}"
@@ -72,7 +72,7 @@ record_pass() { TESTS_PASSED=$((TESTS_PASSED + 1)); pass "$1"; }
 record_fail() {
     TESTS_FAILED=$((TESTS_FAILED + 1))
     FAILED_TESTS+=("$1")
-    echo "     [FAIL] $1"
+    echo "     ❌ FAILED: $1"
 }
 
 _cleanup() {
