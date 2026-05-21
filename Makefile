@@ -18,6 +18,8 @@ endif
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
 .PHONY: tf-setup-aks tf-plan-aks tf-destroy-aks tf-output-aks
+.PHONY: gke-setup gke-helm gke-test gke-full gke-cleanup
+.PHONY: tf-setup-gke tf-plan-gke tf-destroy-gke tf-output-gke
 
 # ================================
 # Help Target
@@ -79,6 +81,19 @@ help:
 	@echo "  make tf-plan-aks           - terraform plan (preview changes without applying)"
 	@echo "  make tf-destroy-aks        - terraform destroy (tear down ALL Azure resources cleanly)"
 	@echo "  make tf-output-aks         - Show terraform outputs (cluster name, kubeconfig cmd, etc.)"
+	@echo ""
+	@echo "GCP GKE Integration Testing targets:"
+	@echo "  make gke-setup             - Provision GKE cluster via Terraform (tf-setup-gke)"
+	@echo "  make gke-helm              - Install Helm chart with GKE values (standard-rwo, LoadBalancer)"
+	@echo "  make gke-test              - Run full GKE integration test suite"
+	@echo "  make gke-full              - Full GKE workflow (gke-setup + worker-config + helm + test)"
+	@echo "  make gke-cleanup           - Uninstall Helm release from GKE (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo ""
+	@echo "Terraform GKE targets:"
+	@echo "  make tf-setup-gke          - terraform init + apply (GKE cluster + node pool)"
+	@echo "  make tf-plan-gke           - terraform plan (preview changes without applying)"
+	@echo "  make tf-destroy-gke        - terraform destroy (tear down ALL GCP resources cleanly)"
+	@echo "  make tf-output-gke         - Show terraform outputs (cluster name, etc.)"
 	@echo "================================"
 
 # ================================
@@ -964,6 +979,195 @@ tf-output-aks:
 	@echo "================================"
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
 	@cd tests/integration/terraform/azure && terraform output
+
+# ================================
+# GCP GKE Integration Testing Targets
+# ================================
+
+gke-setup:
+	@$(MAKE) tf-setup-gke
+
+gke-helm:
+	@echo "Installing Helm Chart on GKE..."
+	@echo ""
+	@for v in GCP_PROJECT_ID GCP_REGION GKE_ZONE GKE_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@echo "Updating kubeconfig for cluster $${GKE_CLUSTER_NAME}..."; \
+	gcloud container clusters get-credentials "$${GKE_CLUSTER_NAME}" \
+		--zone "$${GKE_ZONE}" \
+		--project "$${GCP_PROJECT_ID}"; \
+	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
+	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-standard-rwo}"; \
+	if helm status boundary-worker -n boundary --kube-context "$${GKE_CONTEXT}" >/dev/null 2>&1; then \
+		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make gke-cleanup' first to reinstall."; \
+	else \
+		echo "Installing boundary-worker chart with GKE values..."; \
+		helm install boundary-worker . \
+			--namespace boundary \
+			--create-namespace \
+			--kube-context "$${GKE_CONTEXT}" \
+			--set worker.service.proxy.type=LoadBalancer \
+			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
+			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+			--set-file worker.config=worker.hcl \
+			--timeout 10m \
+			--rollback-on-failure; \
+	fi; \
+	echo ""; \
+	echo "Deployed resources:"; \
+	kubectl get all -n boundary --context "$${GKE_CONTEXT}"
+	@echo ""
+	@echo "✅ Helm chart installed on GKE"
+	@echo ""
+
+gke-test:
+	@echo "Running GKE Integration Tests..."
+	@echo ""
+	@for v in GCP_PROJECT_ID GCP_REGION GKE_ZONE GKE_CLUSTER_NAME BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set. Check your .env or export it."; \
+			exit 1; \
+		fi; \
+	done
+	@bash tests/integration/gke-integration-test.sh
+	@echo ""
+
+gke-full:
+	@echo "================================"
+	@echo "Full GKE Integration Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) tf-setup-gke
+	@$(MAKE) worker-config
+	@$(MAKE) gke-helm
+	@$(MAKE) gke-test
+	@echo ""
+	@echo "✅ End-to-end GKE workflow has been completed successfully"
+	@echo ""
+	@echo "To cleanup: make gke-cleanup"
+
+gke-cleanup:
+	@echo "================================"
+	@echo "Cleaning Up GKE Resources"
+	@echo "================================"
+	@echo ""
+	@for v in GCP_PROJECT_ID GCP_REGION GKE_ZONE GKE_CLUSTER_NAME; do \
+		if [ -z "$${!v:-}" ]; then \
+			echo "❌ $$v is not set."; exit 1; \
+		fi; \
+	done
+	@gcloud container clusters get-credentials "$${GKE_CLUSTER_NAME}" \
+		--zone "$${GKE_ZONE}" \
+		--project "$${GCP_PROJECT_ID}" >/dev/null 2>&1 || true; \
+	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
+	if helm status boundary-worker -n boundary --kube-context "$${GKE_CONTEXT}" >/dev/null 2>&1; then \
+		echo "Uninstalling Helm release boundary-worker..."; \
+		helm uninstall boundary-worker --namespace boundary --kube-context "$${GKE_CONTEXT}" --wait --timeout 5m; \
+		echo "✅ Helm release uninstalled"; \
+	else \
+		echo "⚠️  Helm release not found"; \
+	fi; \
+	kubectl delete namespace boundary --context "$${GKE_CONTEXT}" --ignore-not-found 2>/dev/null || true
+	@rm -f worker.hcl
+	@echo "✅ Removed worker.hcl"
+	@if [ "$${DESTROY_CLUSTER:-false}" = "true" ]; then \
+		echo ""; \
+		echo "Destroying Terraform GKE stack (DESTROY_CLUSTER=true)..."; \
+		$(MAKE) tf-destroy-gke; \
+	else \
+		echo ""; \
+		echo "ℹ  GKE cluster retained. To destroy: DESTROY_CLUSTER=true make gke-cleanup"; \
+	fi
+
+# ================================
+# Terraform GKE Targets
+# ================================
+
+tf-plan-gke:
+	@echo "================================"
+	@echo "Terraform Plan (GKE)"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@command -v gcloud >/dev/null 2>&1 || { echo "❌ gcloud not found. Install Google Cloud SDK first."; exit 1; }
+	@if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then \
+		echo "❌ Google ADC is missing or expired (reauth required)."; \
+		echo "   Run: gcloud auth application-default login"; \
+		echo "   If your org enforces reauth, also run: gcloud auth login"; \
+		exit 1; \
+	fi
+	@cd tests/integration/terraform/gcp && \
+		terraform init -upgrade && \
+		terraform plan \
+			-var="project_id=$${GCP_PROJECT_ID:-}" \
+			-var="region=$${GCP_REGION:-us-central1}" \
+			-var="zone=$${GKE_ZONE:-us-central1-a}" \
+			-var="cluster_name=$${GKE_CLUSTER_NAME:-boundary-gke-cluster}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}"
+
+tf-setup-gke:
+	@echo "================================"
+	@echo "Provisioning GKE with Terraform"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
+	@command -v gcloud >/dev/null 2>&1 || { echo "❌ gcloud not found. Install Google Cloud SDK first."; exit 1; }
+	@if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then \
+		echo "❌ Google ADC is missing or expired (reauth required)."; \
+		echo "   Run: gcloud auth application-default login"; \
+		echo "   If your org enforces reauth, also run: gcloud auth login"; \
+		exit 1; \
+	fi
+	@cd tests/integration/terraform/gcp && \
+		terraform init -upgrade && \
+		terraform apply -auto-approve \
+			-var="project_id=$${GCP_PROJECT_ID:-}" \
+			-var="region=$${GCP_REGION:-us-central1}" \
+			-var="zone=$${GKE_ZONE:-us-central1-a}" \
+			-var="cluster_name=$${GKE_CLUSTER_NAME:-boundary-gke-cluster}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}"
+	@echo ""
+	@echo "Updating kubeconfig..."
+	@gcloud container clusters get-credentials "$${GKE_CLUSTER_NAME:-boundary-gke-cluster}" \
+		--zone "$${GKE_ZONE:-us-central1-a}" \
+		--region "$${GCP_REGION:-us-central1}" \
+		--project "$${GCP_PROJECT_ID:-}"
+	@echo ""
+	@echo "✅ GKE cluster and all prerequisites are ready"
+	@echo ""
+
+tf-destroy-gke:
+	@echo "================================"
+	@echo "Destroying GKE Terraform Stack"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@command -v gcloud >/dev/null 2>&1 || { echo "❌ gcloud not found. Install Google Cloud SDK first."; exit 1; }
+	@if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then \
+		echo "❌ Google ADC is missing or expired (reauth required)."; \
+		echo "   Run: gcloud auth application-default login"; \
+		echo "   If your org enforces reauth, also run: gcloud auth login"; \
+		exit 1; \
+	fi
+	@cd tests/integration/terraform/gcp && \
+		terraform init -upgrade && \
+		terraform destroy -auto-approve \
+			-var="project_id=$${GCP_PROJECT_ID:-}" \
+			-var="region=$${GCP_REGION:-us-central1}" \
+			-var="zone=$${GKE_ZONE:-us-central1-a}" \
+			-var="cluster_name=$${GKE_CLUSTER_NAME:-boundary-gke-cluster}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}"
+	@echo ""
+	@echo "✅ GKE cluster and all GCP resources destroyed"
+	@echo ""
+
+tf-output-gke:
+	@echo "================================"
+	@echo "Terraform Outputs (GKE)"
+	@echo "================================"
+	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@cd tests/integration/terraform/gcp && terraform output
 
 tf-destroy:
 	@echo "================================"
