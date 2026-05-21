@@ -672,7 +672,7 @@ eks-full:
 	@echo ""
 	@echo "✅ End-to-end EKS workflow has been completed successfully"
 	@echo ""
-	@echo "To cleanup: make eks-cleanup"
+	@echo "To cleanup: make eks-cleanup or DESTROY_CLUSTER=true make eks-cleanup (to also destroy the cluster)"
 
 eks-cleanup:
 	@echo "================================"
@@ -863,7 +863,7 @@ aks-full:
 	@echo ""
 	@echo "✅ End-to-end AKS workflow has been completed successfully"
 	@echo ""
-	@echo "To cleanup: make aks-cleanup"
+	@echo "To cleanup: make aks-cleanup or DESTROY_CLUSTER=true make aks-cleanup (to also destroy the cluster)"
 
 aks-cleanup:
 	@echo "================================"
@@ -928,8 +928,39 @@ tf-setup-aks:
 	@echo "================================"
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
 	@command -v az >/dev/null 2>&1 || { echo "❌ Azure CLI not found. Install: brew install azure-cli"; exit 1; }
+	@echo "Ensuring required Azure resource providers are registered..."
+	@SUB_FLAG=""; \
+	if [ -n "$${AZURE_SUBSCRIPTION_ID:-}" ]; then \
+		SUB_FLAG="--subscription $${AZURE_SUBSCRIPTION_ID}"; \
+	fi; \
+	for ns in Microsoft.ContainerService Microsoft.Network Microsoft.Compute Microsoft.Storage; do \
+		STATE=$$(az provider show --namespace "$$ns" $$SUB_FLAG --query "registrationState" -o tsv 2>/dev/null || echo "Unknown"); \
+		if [ "$$STATE" != "Registered" ]; then \
+			echo "  Registering $$ns (current state: $$STATE)..."; \
+			az provider register --namespace "$$ns" $$SUB_FLAG --wait; \
+			echo "  ✅ $$ns registered"; \
+		else \
+			echo "  ✅ $$ns already registered"; \
+		fi; \
+	done
 	@cd tests/integration/terraform/azure && \
 		terraform init -upgrade && \
+		terraform apply -auto-approve \
+			-target=azurerm_resource_group.aks \
+			-target=azurerm_virtual_network.aks \
+			-target=azurerm_subnet.aks_nodes \
+			-target=azurerm_kubernetes_cluster.aks \
+			-var="azure_subscription_id=$${AZURE_SUBSCRIPTION_ID:-}" \
+			-var="azure_location=$${AZURE_LOCATION:-eastus}" \
+			-var="resource_group_name=$${AZURE_RESOURCE_GROUP:-boundary-worker-rg}" \
+			-var="cluster_name=$${AKS_CLUSTER_NAME:-boundary-aks-cluster}" \
+			-var="k8s_version=$${K8S_VERSION:-1.31}" \
+			-var="node_vm_size=$${TF_NODE_VM_SIZE:-Standard_D2s_v3}" \
+			-var="node_count=$${TF_NODE_COUNT:-2}" \
+			-var="node_min_count=$${TF_NODE_MIN:-1}" \
+			-var="node_max_count=$${TF_NODE_MAX:-3}" \
+			-var="storage_class_name=$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}" && \
+		terraform import kubernetes_storage_class_v1.managed_csi_premium "$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}" 2>/dev/null || true && \
 		terraform apply -auto-approve \
 			-var="azure_subscription_id=$${AZURE_SUBSCRIPTION_ID:-}" \
 			-var="azure_location=$${AZURE_LOCATION:-eastus}" \
@@ -1048,7 +1079,7 @@ gke-full:
 	@echo ""
 	@echo "✅ End-to-end GKE workflow has been completed successfully"
 	@echo ""
-	@echo "To cleanup: make gke-cleanup"
+	@echo "To cleanup: make gke-cleanup or DESTROY_CLUSTER=true make gke-cleanup (to also destroy the cluster)"
 
 gke-cleanup:
 	@echo "================================"
