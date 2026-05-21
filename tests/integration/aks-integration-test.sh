@@ -371,11 +371,8 @@ AUTH_FILES=$(kubectl exec -n "${NAMESPACE}" "${POD}" \
     || warn "Auth storage empty — worker may not have completed enrollment yet"
 
 # Confirm worker record in Boundary
-# For controller-led workers the worker name in Boundary is a Boundary-assigned
-# identifier set at 'boundary workers create controller-led' time — it is NOT
-# derived from the pod hostname.  Match only on the BOUNDARY_WORKER_TAG and a
-# non-empty address (i.e. the worker is connected), consistent with the EKS test.
-# Poll until the worker appears or WORKER_POLL_TIMEOUT is reached.
+# Poll until a connected worker with BOUNDARY_WORKER_TAG appears or
+# WORKER_POLL_TIMEOUT is reached.
 REGISTERED_WORKER_ID=""
 WORKER_ELAPSED=0
 WORKER_INTERVAL=15
@@ -405,8 +402,8 @@ for w in data.get("items", []):
 done
 
 [ -n "${REGISTERED_WORKER_ID}" ] \
-    && record_pass "Worker registered in Boundary (pod=${POD}): ${REGISTERED_WORKER_ID}" \
-    || record_fail "No connected worker matching pod '${POD}' with '${BOUNDARY_WORKER_TAG}' tag found in Boundary — activation token may not have been consumed yet"
+    && record_pass "Worker registered in Boundary: ${REGISTERED_WORKER_ID}" \
+    || record_fail "No connected worker with '${BOUNDARY_WORKER_TAG}' tag found in Boundary — activation token may not have been consumed yet"
 
 # Verify upstream connection attempt in logs
 if kubectl logs "${POD}" \

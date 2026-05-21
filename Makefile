@@ -929,11 +929,15 @@ tf-setup-aks:
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found. Install: brew install terraform"; exit 1; }
 	@command -v az >/dev/null 2>&1 || { echo "❌ Azure CLI not found. Install: brew install azure-cli"; exit 1; }
 	@echo "Ensuring required Azure resource providers are registered..."
-	@for ns in Microsoft.ContainerService Microsoft.Network Microsoft.Compute Microsoft.Storage; do \
-		STATE=$$(az provider show --namespace "$$ns" --subscription "$${AZURE_SUBSCRIPTION_ID:-}" --query "registrationState" -o tsv 2>/dev/null || echo "Unknown"); \
+	@SUB_FLAG=""; \
+	if [ -n "$${AZURE_SUBSCRIPTION_ID:-}" ]; then \
+		SUB_FLAG="--subscription $${AZURE_SUBSCRIPTION_ID}"; \
+	fi; \
+	for ns in Microsoft.ContainerService Microsoft.Network Microsoft.Compute Microsoft.Storage; do \
+		STATE=$$(az provider show --namespace "$$ns" $$SUB_FLAG --query "registrationState" -o tsv 2>/dev/null || echo "Unknown"); \
 		if [ "$$STATE" != "Registered" ]; then \
 			echo "  Registering $$ns (current state: $$STATE)..."; \
-			az provider register --namespace "$$ns" --subscription "$${AZURE_SUBSCRIPTION_ID:-}" --wait; \
+			az provider register --namespace "$$ns" $$SUB_FLAG --wait; \
 			echo "  ✅ $$ns registered"; \
 		else \
 			echo "  ✅ $$ns already registered"; \
@@ -956,6 +960,7 @@ tf-setup-aks:
 			-var="node_min_count=$${TF_NODE_MIN:-1}" \
 			-var="node_max_count=$${TF_NODE_MAX:-3}" \
 			-var="storage_class_name=$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}" && \
+		terraform import kubernetes_storage_class_v1.managed_csi_premium "$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}" 2>/dev/null || true && \
 		terraform apply -auto-approve \
 			-var="azure_subscription_id=$${AZURE_SUBSCRIPTION_ID:-}" \
 			-var="azure_location=$${AZURE_LOCATION:-eastus}" \
