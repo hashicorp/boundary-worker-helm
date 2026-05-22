@@ -151,3 +151,14 @@ limits:
   cpu: 200m
   memory: 256Mi
 {{- end }}
+
+{{/*
+Get the service account name for the worker
+*/}}
+{{- define "boundary.worker.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "boundary.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}

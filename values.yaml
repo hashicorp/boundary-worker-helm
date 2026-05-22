@@ -111,6 +111,16 @@ containerSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# ServiceAccount configuration
+# Annotate with IRSA (eks.amazonaws.com/role-arn) or Workload Identity to grant
+# the worker pod cloud-provider permissions (e.g. AWS KMS) without Kubernetes Secrets.
+serviceAccount:
+  create: false
+  name: ""  # Defaults to the chart fullname when empty
+  annotations: {}
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/boundary-worker-role
+  # iam.gke.io/gcp-service-account: boundary-worker@PROJECT.iam.gserviceaccount.com
+
 # Optional configurations
 imagePullSecrets: []
 podAnnotations: {}
