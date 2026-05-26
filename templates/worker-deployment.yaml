@@ -26,6 +26,7 @@ spec:
         {{- include "boundary.worker.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "boundary.worker.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

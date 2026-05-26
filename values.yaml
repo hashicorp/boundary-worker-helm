@@ -120,6 +120,7 @@ serviceAccount:
   annotations: {}
   # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/boundary-worker-role
   # iam.gke.io/gcp-service-account: boundary-worker@PROJECT.iam.gserviceaccount.com
+  automountServiceAccountToken: false  # Set to true when using IRSA or Workload Identity
 
 # Optional configurations
 imagePullSecrets: []
