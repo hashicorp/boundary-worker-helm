@@ -21,10 +21,3 @@ sources:
 maintainers:
   - name: HashiCorp
     url: https://github.com/hashicorp/boundary-worker-helm
-annotations:
-  artifacthub.io/license: MPL-2.0
-  artifacthub.io/changes: |
-    - kind: added
-      description: Initial Helm chart for HashiCorp Boundary Worker
-  artifacthub.io/containsSecurityUpdates: "false"
-  artifacthub.io/prerelease: "true"

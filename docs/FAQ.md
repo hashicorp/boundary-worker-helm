@@ -184,7 +184,7 @@ Supported KMS providers and their purposes follow the same options as the Bounda
 
 Use your cloud provider's workload identity mechanism so no long-lived credentials are required:
 
-- **AWS**: Annotate the pod's ServiceAccount with an IAM role ARN via IRSA (`eks.amazonaws.com/role-arn`). The chart sets `automountServiceAccountToken: false` by default — to use IRSA you must set `automountServiceAccountToken: true` and configure the ServiceAccount.
+- **AWS**: Annotate the pod's ServiceAccount with an IAM role ARN via IRSA (`eks.amazonaws.com/role-arn`). The chart hardcodes `automountServiceAccountToken: false` in `templates/worker-deployment.yaml` — to use IRSA you must modify that template to remove the hardcoded value and configure an appropriate ServiceAccount with the IAM role annotation.
 - **GCP**: Annotate the ServiceAccount with a GCP service account email (`iam.gke.io/gcp-service-account`) for Workload Identity.
 - **Azure**: Use Azure Workload Identity annotations.
 - **Vault**: Inject a token via the Vault Agent Injector as an environment variable or file and reference it in the `transit` KMS stanza.
@@ -512,7 +512,7 @@ The Boundary container entrypoint normally calls `setcap` to grant the binary `I
 
 The worker pod does not need to call the Kubernetes API, so the service account token is not mounted. This reduces the blast radius if the worker container is compromised — it cannot use the token to access cluster resources.
 
-If you need to integrate with a cloud provider's Workload Identity mechanism (e.g. AWS IRSA), you must set `automountServiceAccountToken: true` on the ServiceAccount and configure the appropriate annotations.
+If you need to integrate with a cloud provider's Workload Identity mechanism (e.g. AWS IRSA), modify `templates/worker-deployment.yaml` to remove the hardcoded `automountServiceAccountToken: false`. This is not configurable via Helm values. You must also add `serviceAccountName` to the pod spec and create the ServiceAccount with the appropriate cloud provider annotations outside the chart.
 
 ---
 
