@@ -55,13 +55,17 @@ The charts do not infer all runtime settings from Kubernetes values. You must ke
 The documentation is organized by chart role:
 
 1. This overview contains information that applies to both Boundary Helm charts.
-2. [Controller chart documentation](2-controller/1-overview.md) contains controller-specific context.
-3. [Worker chart documentation](3-worker/1-install.md) contains the current worker chart installation and operations documentation.
+2. [Controller chart documentation](2-controller/1-install.md) contains the current controller chart installation, configuration, and examples.
+3. [Worker chart documentation](3-worker/1-install.md) contains the current worker chart installation, configuration, and examples.
+
+Use the controller section for the current controller chart documentation:
+
+- [Install a Boundary controller](2-controller/1-install.md)
+- [Configure the controller chart](2-controller/2-configuration.md)
+- [Controller examples](2-controller/3-examples.md)
 
 Use the worker section for the current worker chart documentation:
 
 - [Install a Boundary worker](3-worker/1-install.md)
 - [Configure the worker chart](3-worker/2-configuration.md)
 - [Worker examples](3-worker/3-examples.md)
-- [Operate a worker release](3-worker/4-operations.md)
-- [Worker security considerations](3-worker/5-security.md)
