@@ -349,6 +349,16 @@ for VERSION in "${KIND_VERSIONS[@]}"; do
     echo ""
     info "Tearing down cluster for KIND ${VERSION}..."
     cleanup_cluster "${KIND_BIN}"
+
+    # 10. Run Boundary-side cleanup to remove worker registration(s)
+    # Run cleanup script from chart dir so it can load .env
+    if [ -x "${SCRIPT_DIR}/cleanup-worker.sh" ]; then
+        info "Running Boundary worker cleanup script..."
+        (cd "${CHART_DIR}" && bash "${SCRIPT_DIR}/cleanup-worker.sh") || warn "cleanup-worker.sh failed for KIND ${VERSION}"
+    else
+        warn "cleanup-worker.sh not found or not executable at ${SCRIPT_DIR}"
+    fi
+
     info "Removing worker.hcl..."
     rm -f "${CHART_DIR}/worker.hcl"
     pass "Cleanup complete for KIND ${VERSION}"

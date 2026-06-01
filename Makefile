@@ -538,6 +538,7 @@ acceptance-helm:
 acceptance-test:
 	@bash tests/acceptance/cluster-smoke-test.sh
 	@bash tests/acceptance/tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
 	@bash tests/acceptance/kind-version-matrix-test.sh
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
@@ -576,9 +577,6 @@ kind-matrix-cleanup:
 	@echo "================================"
 	@echo "KIND Matrix Cleanup"
 	@echo "================================"
-	@echo "Cleaning up worker from Boundary cluster..."
-	@bash tests/acceptance/cleanup-worker.sh || true
-	@echo ""
 	@find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'kind-v[0-9]*' 2>/dev/null | while read -r BIN; do \
 		if [ -x "$$BIN" ] && "$$BIN" get clusters 2>/dev/null | grep -q "^acceptance$$"; then \
 			echo "Deleting cluster using $$(basename $$BIN) binary..."; \

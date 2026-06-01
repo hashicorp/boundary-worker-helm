@@ -17,7 +17,7 @@ worker {
   auth_storage_path = "/var/lib/boundary"
   recording_storage_path = "/boundary/recording"
   tags {
-    type = ["worker", "egress", "acceptance"]
+    type = ["worker", "egress"]
   }
   
   controller_generated_activation_token = "<activation-token>"
