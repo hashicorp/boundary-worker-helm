@@ -182,6 +182,9 @@ for w in data.get('items', []):
 
 [ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
 pass "Worker record exists in Boundary: ${WORKER_ID}"
+
+# Save WORKER_ID for cleanup
+echo "${WORKER_ID}" > /tmp/boundary-worker-id.txt
 echo ""
 
 # ── Log: confirm worker is reaching upstream ──────────────────────────────────

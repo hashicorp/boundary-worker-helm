@@ -109,6 +109,21 @@ BOUNDARY_CLUSTER_ID="<your-hcp-boundary-cluster-id>"
 BOUNDARY_TARGET_ID="ttcp_<your-target-id>"
 ```
 
+**Important:** The acceptance test creates a worker with the tag `type=acceptance`. To ensure the test uses this specific worker, configure your target with an **egress worker filter**:
+
+```bash
+# Add egress worker filter to your target
+boundary targets add-worker-filter \
+  -id <your-target-id> \
+  -egress-filter '"acceptance" in "/tags/type"'
+```
+
+**Why egress filter?**
+- **Egress filter**: Controls which workers handle outbound connections from clients to the target (what you need for this test)
+- **Ingress filter**: Controls which workers can accept incoming connections to reach the target
+
+This ensures sessions to the target will only use workers tagged with `type=acceptance`, guaranteeing the test validates the newly deployed worker.
+
 #### 2. Generate a worker HCL configuration
 
 ```bash
@@ -162,6 +177,7 @@ bash tests/acceptance/tcp-target-conn-test.sh
 6. Session can be authorized against a configured TCP target
 7. `boundary connect` establishes a proxy and returns valid session fields:
    - Session ID, proxy address, port, protocol, expiration, connection limit
+8. **Session verification**: Confirms the session is using the newly created worker (not an existing worker)
 
 **Duration:** ~5–10 minutes
 
@@ -219,13 +235,17 @@ This runs the complete sequence: `acceptance-setup` → `worker-config` → `acc
 
 ### Cleanup
 
-Remove the KIND cluster and Helm release:
+Remove the KIND cluster, Helm release, and worker registration from Boundary:
 
 ```bash
 make acceptance-cleanup
 ```
 
-This deletes the `acceptance` KIND cluster and uninstalls the Helm release, but preserves cached KIND binaries in `/tmp` for faster subsequent test runs.
+This performs the following cleanup actions:
+1. Deletes the worker registration from the Boundary cluster (prevents worker buildup)
+2. Deletes the `acceptance` KIND cluster
+3. Uninstalls the Helm release
+4. Preserves cached KIND binaries in `/tmp` for faster subsequent test runs
 
 To also remove cached KIND binaries (used by the matrix test):
 

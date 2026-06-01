@@ -576,6 +576,9 @@ kind-matrix-cleanup:
 	@echo "================================"
 	@echo "KIND Matrix Cleanup"
 	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
 	@find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'kind-v[0-9]*' 2>/dev/null | while read -r BIN; do \
 		if [ -x "$$BIN" ] && "$$BIN" get clusters 2>/dev/null | grep -q "^acceptance$$"; then \
 			echo "Deleting cluster using $$(basename $$BIN) binary..."; \
@@ -585,12 +588,16 @@ kind-matrix-cleanup:
 		echo "✅ Removed cached $$(basename $$BIN) binary"; \
 	done
 	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
 	@echo "✅ KIND matrix cleanup complete"
 
 acceptance-cleanup:
 	@echo "================================"
 	@echo "Cleaning up Acceptance Cluster"
 	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
 	@if kind get clusters | grep -q "^acceptance$$"; then \
 		echo "Deleting KIND cluster 'acceptance'..."; \
 		kind delete cluster --name acceptance; \
@@ -604,6 +611,8 @@ acceptance-cleanup:
 	done
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo "✅ Removed worker ID file"
 
 # ================================
 # AWS EKS Acceptance Testing Targets
