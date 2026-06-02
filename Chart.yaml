@@ -1,4 +1,5 @@
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
 apiVersion: v2
 name: boundary-worker
@@ -15,7 +16,7 @@ keywords:
   - zero-trust
   - worker
 home: https://www.boundaryproject.io/
-icon: https://www.hashicorp.com/img/logo-hashicorp.svg
+icon: https://raw.githubusercontent.com/hashicorp/boundary/main/boundary.png
 sources:
   - https://github.com/hashicorp/boundary-worker-helm
 maintainers:

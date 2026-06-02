@@ -5,7 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "boundary.worker.deploymentName" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "boundary.namespace" . }}
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
@@ -18,7 +18,7 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/worker-configmap.yaml") . | sha256sum }}
-        checksum/values: {{ toJson .Values.worker | sha256sum }}
+        checksum/values: {{ .Values.worker.config | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -53,8 +53,8 @@ spec:
             - |
               # Substitute environment variables and convert POD_NAME to lowercase
               export POD_NAME_LOWER=$(echo $POD_NAME | tr '[:upper:]' '[:lower:]')
-              sed "s/\${POD_NAME_LOWER}/$POD_NAME_LOWER/g" /etc/boundary/boundary-worker.hcl > /tmp/boundary-worker-processed.hcl
-              exec boundary server -config=/tmp/boundary-worker-processed.hcl
+              sed "s/\${POD_NAME_LOWER}/$POD_NAME_LOWER/g" /etc/boundary/boundary-worker.hcl > /processed-config/boundary-worker-processed.hcl
+              exec boundary server -config=/processed-config/boundary-worker-processed.hcl
           ports:
             - name: proxy
               containerPort: 9202
@@ -63,15 +63,23 @@ spec:
               containerPort: 9203
               protocol: TCP
           livenessProbe:
-            tcpSocket:
-              port: proxy
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            httpGet:
+              path: /health
+              port: ops
+              scheme: {{ .Values.worker.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.worker.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.worker.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.worker.livenessProbe.timeoutSeconds }}
           readinessProbe:
-            tcpSocket:
-              port: proxy
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            httpGet:
+              path: /health
+              port: ops
+              scheme: {{ .Values.worker.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.worker.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.worker.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.worker.readinessProbe.timeoutSeconds }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           volumeMounts:
@@ -80,6 +88,8 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            - name: processed-config
+              mountPath: /processed-config
             - name: auth-storage
               mountPath: {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
             {{- if .Values.worker.persistence.recording.enabled }}
@@ -91,6 +101,8 @@ spec:
           configMap:
             name: {{ include "boundary.worker.configmapName" . }}
         - name: tmp
+          emptyDir: {}
+        - name: processed-config
           emptyDir: {}
         {{- if .Values.worker.persistence.authStorage.enabled }}
         - name: auth-storage

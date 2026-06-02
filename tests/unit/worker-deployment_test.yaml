@@ -90,10 +90,10 @@ tests:
       worker.persistence.authStorage.path: /custom/auth
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[2].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[3].mountPath
           value: /custom/auth
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[3].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[4].mountPath
           value: /custom/recording
 
   - it: should not mount recording volume when disabled
@@ -102,7 +102,7 @@ tests:
       worker.persistence.recording.enabled: false
     asserts:
       - isNull:
-          path: spec.template.spec.containers[0].volumeMounts[3]
+          path: spec.template.spec.containers[0].volumeMounts[4]
 
   # ============================================================================
   # SECURITY CONTEXT TESTS
@@ -310,16 +310,22 @@ tests:
       - isNotNull:
           path: spec.template.spec.containers[0].livenessProbe
       - equal:
-          path: spec.template.spec.containers[0].livenessProbe.tcpSocket.port
-          value: proxy
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: ops
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
           value: 10
       - isNotNull:
           path: spec.template.spec.containers[0].readinessProbe
       - equal:
-          path: spec.template.spec.containers[0].readinessProbe.tcpSocket.port
-          value: proxy
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: ops
 
   - it: should configure environment variables
     template: worker-deployment.yaml
@@ -359,9 +365,12 @@ tests:
           value: tmp
       - equal:
           path: spec.template.spec.volumes[2].name
-          value: auth-storage
+          value: processed-config
       - equal:
           path: spec.template.spec.volumes[3].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.volumes[4].name
           value: recording-storage
 
   - it: should configure volume mounts correctly
@@ -383,9 +392,12 @@ tests:
           value: tmp
       - equal:
           path: spec.template.spec.containers[0].volumeMounts[2].name
-          value: auth-storage
+          value: processed-config
       - equal:
           path: spec.template.spec.containers[0].volumeMounts[3].name
+          value: auth-storage
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[4].name
           value: recording-storage
 
   - it: should use emptyDir for auth-storage volume when auth PVC disabled
@@ -394,13 +406,13 @@ tests:
       worker.persistence.authStorage.enabled: false
     asserts:
       - equal:
-          path: spec.template.spec.volumes[2].name
+          path: spec.template.spec.volumes[3].name
           value: auth-storage
       - equal:
-          path: spec.template.spec.volumes[2].emptyDir
+          path: spec.template.spec.volumes[3].emptyDir
           value: {}
       - isNull:
-          path: spec.template.spec.volumes[2].persistentVolumeClaim
+          path: spec.template.spec.volumes[3].persistentVolumeClaim
 
   - it: should mount auth-storage even when auth PVC disabled
     template: worker-deployment.yaml
@@ -408,10 +420,10 @@ tests:
       worker.persistence.authStorage.enabled: false
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[2].name
+          path: spec.template.spec.containers[0].volumeMounts[3].name
           value: auth-storage
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[2].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[3].mountPath
           value: /var/lib/boundary
 
   - it: should use PVC for auth-storage volume when auth PVC enabled
@@ -422,10 +434,10 @@ tests:
       worker.persistence.authStorage.enabled: true
     asserts:
       - equal:
-          path: spec.template.spec.volumes[2].name
+          path: spec.template.spec.volumes[3].name
           value: auth-storage
       - equal:
-          path: spec.template.spec.volumes[2].persistentVolumeClaim.claimName
+          path: spec.template.spec.volumes[3].persistentVolumeClaim.claimName
           value: test-release-auth-storage
 
   # ============================================================================

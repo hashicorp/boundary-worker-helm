@@ -219,13 +219,17 @@ This runs the complete sequence: `acceptance-setup` → `worker-config` → `acc
 
 ### Cleanup
 
-Remove the KIND cluster and Helm release:
+Remove the KIND cluster, Helm release, and worker registration from Boundary:
 
 ```bash
 make acceptance-cleanup
 ```
 
-This deletes the `acceptance` KIND cluster and uninstalls the Helm release, but preserves cached KIND binaries in `/tmp` for faster subsequent test runs.
+This performs the following cleanup actions:
+1. Deletes the worker registration from the Boundary cluster (prevents worker buildup)
+2. Deletes the `acceptance` KIND cluster
+3. Uninstalls the Helm release
+4. Preserves cached KIND binaries in `/tmp` for faster subsequent test runs
 
 To also remove cached KIND binaries (used by the matrix test):
 

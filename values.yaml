@@ -31,17 +31,25 @@ worker:
         type = ["worker", "egress"]
       }
 
-      # REQUIRED: Set your controller-generated activation token
+      # ⚠️ REQUIRED: You MUST set ONE of the following registration methods:
+      # Option 1: Controller-generated activation token (recommended for HCP Boundary)
       # controller_generated_activation_token = "your-activation-token-here"
+      
+      # Option 2: Worker-led registration (requires manual authorization on controller)
+      # Leave activation token unset and use worker auth information from logs
     }
 
-    # REQUIRED: Set your HCP Boundary cluster ID or use initial_upstreams for self-managed
+    # ⚠️ REQUIRED: You MUST set ONE of the following connection methods:
+    # Option 1: HCP Boundary cluster ID
     # hcp_boundary_cluster_id = "your-cluster-id-here"
+    
+    # Option 2: Self-managed Boundary with initial upstreams
+    # initial_upstreams = ["boundary-controller.boundary.svc.cluster.local:9201"]
 
     events {
-      audit_enabled       = true
-      sysevents_enabled   = true
-      observations_enable = true
+      audit_enabled        = true
+      sysevents_enabled    = true
+      observations_enabled = true
       sink "stderr" {
         name = "all-events"
         description = "All events sent to stderr"
@@ -49,10 +57,34 @@ worker:
         format = "cloudevents-json"
       }
     }
-  terminationGracePeriodSeconds: 7200  # 2 hours: allows active sessions to drain naturally before pod termination
+  # Liveness probe configuration
+  livenessProbe:
+    scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+  # Readiness probe configuration
+  readinessProbe:
+    scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+  # Termination grace period: 2 hours (7200 seconds)
+  # This long grace period allows active Boundary sessions to complete naturally before pod termination.
+  # Adjust based on your maximum expected session duration. Sessions longer than this will be forcibly terminated.
+  terminationGracePeriodSeconds: 7200
   service:
     proxy:
       enabled: true
+      # ⚠️ SECURITY WARNING: LoadBalancer type creates a public endpoint in most cloud environments.
+      # This exposes the worker proxy to the internet. For production, consider:
+      # - Using ClusterIP with an Ingress controller
+      # - Setting scheme to "internal" in annotations
+      # - Implementing network policies
       type: LoadBalancer
       port: 9202
       targetPort: 9202
@@ -87,6 +119,9 @@ worker:
       accessMode: ReadWriteOnce
       storageClass: ""  # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/var/lib/boundary"
+
+# Namespace to deploy resources into, keep empty to use the namespace provided via --namespace flag during helm install/upgrade
+namespace: ""
 
 # Pod security context
 podSecurityContext:

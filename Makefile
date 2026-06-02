@@ -538,6 +538,7 @@ acceptance-helm:
 acceptance-test:
 	@bash tests/acceptance/cluster-smoke-test.sh
 	@bash tests/acceptance/tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
 	@bash tests/acceptance/kind-version-matrix-test.sh
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
@@ -585,12 +586,16 @@ kind-matrix-cleanup:
 		echo "✅ Removed cached $$(basename $$BIN) binary"; \
 	done
 	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
 	@echo "✅ KIND matrix cleanup complete"
 
 acceptance-cleanup:
 	@echo "================================"
 	@echo "Cleaning up Acceptance Cluster"
 	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
 	@if kind get clusters | grep -q "^acceptance$$"; then \
 		echo "Deleting KIND cluster 'acceptance'..."; \
 		kind delete cluster --name acceptance; \
@@ -604,6 +609,8 @@ acceptance-cleanup:
 	done
 	@rm -f worker.hcl
 	@echo "✅ Removed worker.hcl"
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo "✅ Removed worker ID file"
 
 # ================================
 # AWS EKS Acceptance Testing Targets
