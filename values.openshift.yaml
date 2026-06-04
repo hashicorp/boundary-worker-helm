@@ -1,0 +1,58 @@
+# Copyright IBM Corp. 2026
+
+# These overrides are appropriate defaults for deploying this chart on OpenShift.
+# Usage:
+#   helm install boundary-worker . \
+#     --namespace boundary \
+#     --create-namespace \
+#     -f values.openshift.yaml \
+#     --set-file worker.config=./worker.hcl
+
+openshift:
+  enabled: true
+  route:
+    proxy:
+      enabled: true
+      # Leave empty to let OpenShift auto-assign a hostname from the cluster's
+      # ingress domain (e.g. boundary-worker-proxy-boundary.apps.cluster.example.com).
+      host: ""
+      tls:
+        # passthrough keeps TLS end-to-end to the worker container.
+        # Use edge only if you terminate TLS at the OCP router and re-encrypt inward.
+        termination: passthrough
+      annotations: {}
+
+# ServiceAccount — create one so it can be bound to an SCC if needed.
+# After installing, grant the restricted-v2 SCC if your namespace policy requires it:
+#   oc adm policy add-scc-to-user restricted-v2 -z boundary-worker -n <namespace>
+#
+# SCC requirements for the boundary-worker pod:
+#   - runAsNonRoot: true   (OCP assigns a UID from the namespace range)
+#   - allowPrivilegeEscalation: false
+#   - readOnlyRootFilesystem: true
+#   - All capabilities dropped
+# The built-in "restricted-v2" SCC (OCP 4.11+) satisfies all of the above.
+# On OCP 4.10 and earlier, use "restricted".
+serviceAccount:
+  create: true
+  name: "boundary-worker"
+  annotations: {}
+  automountServiceAccountToken: false
+
+# Storage — set the OCP storage class appropriate for your platform.
+# Examples:
+#   ROSA / AWS:        gp3-csi
+#   OCP on vSphere:    thin-csi
+#   OCP on Azure:      managed-csi
+#   CRC (local):       crc-csi-hostpath-provisioner
+# Leave storageClass empty to use the cluster default StorageClass.
+worker:
+  service:
+    proxy:
+      # On OpenShift the proxy port is exposed via the Route above; a LoadBalancer is not needed.
+      type: ClusterIP
+  persistence:
+    recording:
+      storageClass: ""
+    authStorage:
+      storageClass: ""

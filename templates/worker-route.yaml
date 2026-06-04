@@ -1,0 +1,28 @@
+# Copyright IBM Corp. 2026
+
+{{- if and .Values.openshift.enabled .Values.openshift.route.proxy.enabled }}
+# Boundary Worker OpenShift Route
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "boundary.worker.route.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.openshift.route.proxy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.openshift.route.proxy.host }}
+  host: {{ .Values.openshift.route.proxy.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "boundary.worker.proxy.serviceName" . }}
+  port:
+    targetPort: proxy
+  tls:
+    termination: {{ .Values.openshift.route.proxy.tls.termination }}
+{{- end }}

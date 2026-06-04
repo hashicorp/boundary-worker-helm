@@ -171,6 +171,13 @@ limits:
 {{- end }}
 
 {{/*
+Get the OpenShift Route name for the worker proxy port
+*/}}
+{{- define "boundary.worker.route.name" -}}
+{{- printf "%s-proxy-route" (include "boundary.fullname" .) }}
+{{- end }}
+
+{{/*
 Get the service account name for the worker
 */}}
 {{- define "boundary.worker.serviceAccountName" -}}

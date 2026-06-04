@@ -10,7 +10,7 @@ metadata:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
-  replicas: 1  # Workers are not scaled horizontally
+  replicas: 1
   selector:
     matchLabels:
       {{- include "boundary.worker.selectorLabels" . | nindent 6 }}
@@ -33,13 +33,21 @@ spec:
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext:
+        {{- if .Values.openshift.enabled }}
+        {{- toYaml .Values.openshift.podSecurityContext | nindent 8 }}
+        {{- else }}
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- end }}
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
+            {{- if .Values.openshift.enabled }}
+            {{- toYaml .Values.openshift.containerSecurityContext | nindent 12 }}
+            {{- else }}
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom:

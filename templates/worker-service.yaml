@@ -15,7 +15,7 @@ metadata:
     {{- . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.worker.service.proxy.type }}
+  type: {{ if .Values.openshift.enabled }}ClusterIP{{ else }}{{ .Values.worker.service.proxy.type }}{{ end }}
   ports:
     - port: {{ .Values.worker.service.proxy.port }}
       targetPort: {{ .Values.worker.service.proxy.targetPort }}
