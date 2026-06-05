@@ -10,7 +10,7 @@ metadata:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
-  replicas: 1
+  replicas: 1  # Workers are not scaled horizontally
   selector:
     matchLabels:
       {{- include "boundary.worker.selectorLabels" . | nindent 6 }}

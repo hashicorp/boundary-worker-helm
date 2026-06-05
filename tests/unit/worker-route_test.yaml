@@ -137,3 +137,15 @@ tests:
           path: metadata.labels["helm.sh/chart"]
       - isNotNull:
           path: metadata.labels["app.kubernetes.io/name"]
+
+  - it: should use values.namespace over release namespace when set
+    release:
+      namespace: release-ns
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      namespace: override-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: override-ns
