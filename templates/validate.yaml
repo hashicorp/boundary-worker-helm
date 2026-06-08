@@ -1,0 +1,6 @@
+{{- /*
+# Copyright IBM Corp. 2026
+
+validate.yaml - Chart-wide validation. Produces no Kubernetes resources.
+*/ -}}
+{{- include "boundary.worker.validateSecretRefs" . -}}

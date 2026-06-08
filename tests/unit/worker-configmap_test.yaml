@@ -133,3 +133,15 @@ tests:
       - matchRegex:
           path: data["boundary-worker.hcl"]
           pattern: "initial_upstreams"
+
+  - it: should preserve env-backed activation token references in worker config
+    set:
+      worker.config: |
+        worker {
+          auth_storage_path = "/var/lib/boundary"
+          controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+        }
+    asserts:
+      - matchRegex:
+          path: data["boundary-worker.hcl"]
+          pattern: "controller_generated_activation_token = \"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\""

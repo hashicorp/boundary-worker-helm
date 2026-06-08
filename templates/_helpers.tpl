@@ -108,6 +108,17 @@ Get the worker Deployment name
 {{- end }}
 
 {{/*
+Get the worker Secret name
+*/}}
+{{- define "boundary.worker.secretName" -}}
+{{- if .Values.secretRefs.secretName }}
+{{- .Values.secretRefs.secretName }}
+{{- else }}
+{{- printf "%s-secrets" (include "boundary.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
 Get the worker recording PVC name
 */}}
 {{- define "boundary.worker.recordingPvcName" -}}
@@ -167,5 +178,44 @@ Get the service account name for the worker
 {{- default (include "boundary.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Returns true when worker config uses the chart-managed env-backed activation token.
+Commented lines are ignored.
+*/}}
+{{- define "boundary.worker.usesEnvActivationToken" -}}
+{{- $renderedConfig := tpl ((default "" .Values.worker.config) | toString) . -}}
+{{- $configNoComments := regexReplaceAll "(?m)^\\s*#.*$" $renderedConfig "" -}}
+{{- if regexMatch "controller_generated_activation_token\\s*=\\s*\"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\"" $configNoComments -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{/*
+Validate manual Secret existence and required keys.
+Runs only when secretRefs.validateExisting=true and secretRefs.secretName is set.
+*/}}
+{{- define "boundary.worker.validateSecretRefs" -}}
+{{- if and .Values.secretRefs.validateExisting .Values.secretRefs.secretName }}
+{{- $secretName := include "boundary.worker.secretName" . | trim -}}
+{{- if eq $secretName "" }}
+{{- fail "secretRefs.secretName resolved to empty value" }}
+{{- end }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- if not $secret }}
+{{- fail (printf "Secret %q not found in namespace %q (set secretRefs.secretName or disable secretRefs.validateExisting)" $secretName .Release.Namespace) }}
+{{- end }}
+{{- $key := .Values.secretRefs.keys.controllerGeneratedActivationToken | trim -}}
+{{- if eq $key "" }}
+{{- fail "secretRefs.keys.controllerGeneratedActivationToken resolved to empty value" }}
+{{- end }}
+{{- $data := default dict (get $secret "data") -}}
+{{- if not (hasKey $data $key) }}
+{{- fail (printf "Secret %q is missing required key %q" $secretName $key) }}
+{{- end }}
 {{- end }}
 {{- end }}

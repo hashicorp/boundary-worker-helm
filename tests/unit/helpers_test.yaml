@@ -189,3 +189,32 @@ tests:
       - isNotNull:
           path: spec.template.spec.containers[0].securityContext
 
+  - it: does not inject activation token env when secretRefs.secretName is empty
+    template: worker-deployment.yaml
+    release:
+      name: test-release
+    set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+        }
+      secretRefs:
+        secretName: ""
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].env[2]
+
+  - it: uses explicit secretRefs.secretName when provided
+    template: worker-deployment.yaml
+    set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+        }
+      secretRefs:
+        secretName: custom-worker-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.name
+          value: custom-worker-secret
+

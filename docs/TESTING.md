@@ -115,7 +115,7 @@ BOUNDARY_TARGET_ID="ttcp_<your-target-id>"
 make worker-config
 ```
 
-This authenticates with Boundary, creates a new worker resource, and writes a ready-to-use `worker.hcl` to the chart root. The activation token is embedded automatically.
+This authenticates with Boundary, creates a new worker resource, and writes a ready-to-use `worker.hcl` to the chart root. That workflow still embeds the activation token directly for local and CI automation. The chart also supports the controller-chart-style Secret flow, where `worker.config` references `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN` and the token comes from `secretRefs`.
 
 #### 3. Install dependencies
 

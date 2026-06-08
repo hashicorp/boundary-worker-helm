@@ -343,6 +343,30 @@ tests:
           path: spec.template.spec.containers[0].env[1].value
           value: "1"
 
+  - it: should inject activation token env when secretRefs.secretName is set
+    template: worker-deployment.yaml
+    set:
+      secretRefs:
+        secretName: boundary-worker-runtime
+        keys:
+          controllerGeneratedActivationToken: activation-token
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+      - equal:
+          path: spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.name
+          value: boundary-worker-runtime
+      - equal:
+          path: spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.key
+          value: activation-token
+
+  - it: should not inject activation token secret env by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].env[2]
+
   # ============================================================================
   # VOLUME TESTS
   # ============================================================================
@@ -468,3 +492,81 @@ tests:
       - equal:
           path: spec.selector.matchLabels["app.kubernetes.io/component"]
           value: worker
+
+  # ============================================================================
+  # EXTRA ENV TESTS
+  # ============================================================================
+
+  - it: should not include extraEnv by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].env[2]
+
+  - it: should inject plain value extraEnv entries
+    template: worker-deployment.yaml
+    set:
+      extraEnv:
+        - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+          value: "my-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+      - equal:
+          path: spec.template.spec.containers[0].env[2].value
+          value: "my-token"
+
+  - it: should inject multiple extraEnv entries in order
+    template: worker-deployment.yaml
+    set:
+      extraEnv:
+        - name: FOO
+          value: "bar"
+        - name: BAZ
+          value: "qux"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: FOO
+      - equal:
+          path: spec.template.spec.containers[0].env[3].name
+          value: BAZ
+
+  - it: should inject extraEnv valueFrom entry
+    template: worker-deployment.yaml
+    set:
+      extraEnv:
+        - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: my-secret
+              key: token
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+      - equal:
+          path: spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.name
+          value: my-secret
+      - equal:
+          path: spec.template.spec.containers[0].env[2].valueFrom.secretKeyRef.key
+          value: token
+
+  - it: should inject both secretRefs and extraEnv when both are set
+    template: worker-deployment.yaml
+    set:
+      secretRefs:
+        secretName: my-secret
+        keys:
+          controllerGeneratedActivationToken: token-key
+      extraEnv:
+        - name: EXTRA_VAR
+          value: "extra-value"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+      - equal:
+          path: spec.template.spec.containers[0].env[3].name
+          value: EXTRA_VAR
