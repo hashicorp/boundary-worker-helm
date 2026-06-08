@@ -6,6 +6,10 @@ Boundary Worker:
 - Deployment: {{ include "boundary.worker.deploymentName" . }}
 - Proxy Service: {{ include "boundary.worker.proxy.serviceName" . }}
 - Ops Service: {{ include "boundary.worker.ops.serviceName" . }}
+{{- if eq (include "boundary.worker.usesEnvActivationToken" . | trim) "true" }}
+- Activation token Secret: {{ include "boundary.worker.secretName" . }}
+- Activation token key: {{ .Values.secretRefs.keys.controllerGeneratedActivationToken }}
+{{- end }}
 
 To complete the setup:
 

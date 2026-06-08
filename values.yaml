@@ -25,26 +25,19 @@ worker:
     }
 
     worker {
-      auth_storage_path = "/var/lib/boundary"
-      recording_storage_path = "/boundary/recording"
+      name = "boundary-worker" # Optional: must be set for kms registration.
+      initial_upstreams = [] # Optional: set when the controller is self-managed.
+      public_addr = "" # Optional: Set the worker's public address to make it reachable by clients.
+      auth_storage_path = "/var/lib/boundary" # Optional: set when using token based worker registration.
+      recording_storage_path = "/boundary/recording" # Optional: set when using session recording.
       tags {
         type = ["worker", "egress"]
       }
 
-      # ⚠️ REQUIRED: You MUST set ONE of the following registration methods:
-      # Option 1: Controller-generated activation token (recommended for HCP Boundary)
-      # controller_generated_activation_token = "your-activation-token-here"
-      
-      # Option 2: Worker-led registration (requires manual authorization on controller)
-      # Leave activation token unset and use worker auth information from logs
+      controller_generated_activation_token = "controller-led-activation-token-here" # Optional: set when using controller-led worker registration. Requires setting the token value via Kubernetes Secret and referencing it with worker.extraEnv or worker.secretRefs. If not set, the worker will attempt to register without a token, which only works if the Boundary Controller is configured to allow tokenless registration.
     }
 
-    # ⚠️ REQUIRED: You MUST set ONE of the following connection methods:
-    # Option 1: HCP Boundary cluster ID
-    # hcp_boundary_cluster_id = "your-cluster-id-here"
-    
-    # Option 2: Self-managed Boundary with initial upstreams
-    # initial_upstreams = ["boundary-controller.boundary.svc.cluster.local:9201"]
+    # hcp_boundary_cluster_id = "your-cluster-id-here" # Optional: set when registering with HCP Boundary.
 
     events {
       audit_enabled        = true
@@ -122,6 +115,24 @@ worker:
 
 # Namespace to deploy resources into, keep empty to use the namespace provided via --namespace flag during helm install/upgrade
 namespace: ""
+
+# Secret References
+# Sensitive values consumed by the worker pod via valueFrom.secretKeyRef.
+# The activation token key is only required when worker.config uses
+# env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN.
+secretRefs:
+  secretName: ""
+  validateExisting: false
+  keys:
+    controllerGeneratedActivationToken: "worker-controller-generated-activation-token"
+
+# Extra environment variables to inject into the worker container.
+# Supports any valid Kubernetes env entry (name/value or name/valueFrom).
+# Example:
+#   extraEnv:
+#     - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+#       value: "my-token"
+extraEnv: []
 
 # Pod security context
 podSecurityContext:

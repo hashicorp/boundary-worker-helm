@@ -120,6 +120,11 @@ If you want overrides, create a separate values file such as `my-values.yaml`.
 Example:
 
 ```yaml
+secretRefs:
+	secretName: boundary-worker-secrets
+	keys:
+		controllerGeneratedActivationToken: worker-controller-generated-activation-token
+
 worker:
 	config: |
 		disable_mlock = true
@@ -132,7 +137,7 @@ worker:
 		worker {
 			auth_storage_path = "/var/lib/boundary"
 			recording_storage_path = "/boundary/recording"
-			controller_generated_activation_token = "<activation-token>"
+			controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
 		}
 
 		hcp_boundary_cluster_id = "<hcp-boundary-cluster-id>"
@@ -166,6 +171,10 @@ helm install boundary-worker . \
 Install with an additional values file containing your worker config and overrides:
 
 ```bash
+kubectl create secret generic boundary-worker-secrets \
+	--namespace boundary \
+	--from-literal=worker-controller-generated-activation-token='<activation-token>'
+
 helm install boundary-worker . \
 	--namespace boundary \
 	--create-namespace \
@@ -273,7 +282,7 @@ worker {
 	auth_storage_path      = "/var/lib/boundary"
 	recording_storage_path = "/boundary/recording"
 
-	controller_generated_activation_token = "<activation-token>"
+	controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
 
 	tags {
 		type = ["kubernetes"]
@@ -282,6 +291,8 @@ worker {
 ```
 
 You can pass HCL directly with `--set-file` or template it from a values file. Because the chart evaluates `worker.config` with Helm `tpl`, Helm template expressions inside the HCL are supported.
+
+For controller-led registration, the preferred pattern is to inject the activation token from an existing Kubernetes Secret using `secretRefs` and `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`. Inline activation tokens still work for externally generated HCL such as `make worker-config`.
 
 ## Public Address And Service Exposure
 
@@ -437,9 +448,10 @@ For controller-led registration:
 
 1. Create the worker in Boundary or HCP Boundary.
 2. Obtain the activation token.
-3. Place the token in the HCL configuration file.
-4. Install the chart.
-5. Verify the worker registers and persists its credentials to auth storage.
+3. Create a Kubernetes Secret containing the activation token under the key configured by `secretRefs.keys.controllerGeneratedActivationToken`.
+4. Reference `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN` in `worker.config`.
+5. Install the chart.
+6. Verify the worker registers and persists its credentials to auth storage.
 
 ### KMS-backed worker authentication
 
@@ -468,6 +480,9 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `image.repository` | `hashicorp/boundary-enterprise` | Boundary worker container image repository. |
 | `image.tag` | `0.21-ent` | Image tag used by the worker container. |
 | `image.pullPolicy` | `IfNotPresent` | Kubernetes image pull policy. |
+| `secretRefs.secretName` | `boundary-worker-secrets` | Existing Kubernetes Secret containing sensitive worker values. |
+| `secretRefs.validateExisting` | `false` | When true, Helm validates the Secret exists when `worker.config` uses the chart-managed env-backed activation token. |
+| `secretRefs.keys.controllerGeneratedActivationToken` | `worker-controller-generated-activation-token` | Secret key for `BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`. |
 | `imagePullSecrets` | `[]` | Optional registry credentials for private image pulls. |
 | `worker.config` | Embedded HCL block | Raw HCL worker configuration passed through a ConfigMap. Set this directly in your values file. |
 | `worker.terminationGracePeriodSeconds` | `7200` | Pod termination grace period in seconds (2 hours). Allows active sessions to drain before pod termination. |
