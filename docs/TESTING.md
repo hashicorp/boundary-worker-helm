@@ -261,6 +261,20 @@ make eks-setup
 make eks-helm
 ```
 
+By default `eks-helm` installs from the local git repo (`.`). To install from a published chart URL or Helm repo reference instead, set `HELM_CHART`:
+
+```bash
+# From a packaged chart URL
+make eks-helm HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+
+# From a Helm repo reference (after helm repo add)
+make eks-helm HELM_CHART=myrepo/boundary-worker
+
+# Or export as an environment variable
+export HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+make eks-helm
+```
+
 #### Run tests
 
 ```bash
@@ -270,7 +284,11 @@ make eks-test
 #### Full workflow
 
 ```bash
+# Local git repo (default)
 make eks-full
+
+# From a chart URL — installs and tests in one command
+make eks-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
 ```
 
 #### Cleanup
@@ -301,7 +319,11 @@ Integration tests deploy the worker chart to an AKS cluster provisioned with Ter
 #### Full workflow
 
 ```bash
+# Local git repo (default)
 make aks-full
+
+# From a chart URL
+make aks-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
 ```
 
 #### Cleanup
@@ -321,6 +343,43 @@ make tf-setup-aks    # terraform init + apply (VNet + AKS + StorageClass)
 make tf-plan-aks     # preview changes
 make tf-output-aks   # show outputs
 make tf-destroy-aks  # destroy all Azure resources
+```
+
+---
+
+## Test Configuration
+
+### GCP GKE
+
+Integration tests deploy the worker chart to a GKE cluster provisioned with Terraform.
+
+#### Full workflow
+
+```bash
+# Local git repo (default)
+make gke-full
+
+# From a chart URL
+make gke-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+```
+
+#### Cleanup
+
+```bash
+# Uninstall Helm release only
+make gke-cleanup
+
+# Uninstall Helm release and destroy cluster
+DESTROY_CLUSTER=true make gke-cleanup
+```
+
+#### Terraform targets (GCP)
+
+```bash
+make tf-setup-gke    # terraform init + apply (GKE cluster + node pool)
+make tf-plan-gke     # preview changes
+make tf-output-gke   # show outputs
+make tf-destroy-gke  # destroy all GCP resources
 ```
 
 ---
