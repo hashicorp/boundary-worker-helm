@@ -261,17 +261,23 @@ make eks-setup
 make eks-helm
 ```
 
-By default `eks-helm` installs from the local git repo (`.`). To install from a published chart URL or Helm repo reference instead, set `HELM_CHART`:
+By default `eks-helm` installs from the local git repo (`.`). To install from a published chart URL or Helm repo reference instead, set `HELM_CHART`.
+When using a Helm repo reference (`repo/chart`), you must also set `HELM_CHART_VERSION`.
 
 ```bash
 # From a packaged chart URL
 make eks-helm HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
 
-# From a Helm repo reference (after helm repo add)
-make eks-helm HELM_CHART=myrepo/boundary-worker
+# From a Helm repo reference (after helm repo add) with explicit chart version
+make eks-helm HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
 
 # Or export as an environment variable
 export HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+make eks-helm
+
+# For repo/chart references, export both HELM_CHART and HELM_CHART_VERSION
+export HELM_CHART=myrepo/boundary-worker
+export HELM_CHART_VERSION=1.2.3
 make eks-helm
 ```
 
@@ -289,6 +295,9 @@ make eks-full
 
 # From a chart URL — installs and tests in one command
 make eks-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+
+# From a Helm repo reference with explicit chart version
+make eks-full HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
 ```
 
 #### Cleanup
@@ -324,6 +333,9 @@ make aks-full
 
 # From a chart URL
 make aks-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+
+# From a Helm repo reference with explicit chart version
+make aks-full HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
 ```
 
 #### Cleanup
@@ -361,6 +373,9 @@ make gke-full
 
 # From a chart URL
 make gke-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+
+# From a Helm repo reference with explicit chart version
+make gke-full HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
 ```
 
 #### Cleanup

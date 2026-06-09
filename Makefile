@@ -10,6 +10,8 @@ endif
 # Chart source for cloud install targets.
 # Supports local path (.), packaged chart URL, or repo/chart reference.
 HELM_CHART ?= .
+# Required only when HELM_CHART is a repo/chart reference.
+HELM_CHART_VERSION ?=
 
 # ================================
 # PHONY Declarations
@@ -67,6 +69,7 @@ help:
 	@echo "  make eks-full              - Full EKS workflow (eks-setup + worker-config + helm + test)"
 	@echo "  make eks-cleanup           - Uninstall Helm release from EKS (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
+	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
 	@echo ""
 	@echo "Terraform EKS targets (recommended):"
 	@echo "  make tf-setup              - terraform init + apply (VPC + EKS + EBS CSI + LBC)"
@@ -81,6 +84,7 @@ help:
 	@echo "  make aks-full              - Full AKS workflow (aks-setup + worker-config + helm + test)"
 	@echo "  make aks-cleanup           - Uninstall Helm release from AKS (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
+	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
 	@echo ""
 	@echo "Terraform AKS targets:"
 	@echo "  make tf-setup-aks          - terraform init + apply (VNet + AKS + StorageClass)"
@@ -95,6 +99,7 @@ help:
 	@echo "  make gke-full              - Full GKE workflow (gke-setup + worker-config + helm + test)"
 	@echo "  make gke-cleanup           - Uninstall Helm release from GKE (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
+	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
 	@echo ""
 	@echo "Terraform GKE targets:"
 	@echo "  make tf-setup-gke          - terraform init + apply (GKE cluster + node pool)"
@@ -639,28 +644,36 @@ eks-helm:
 		{ echo "❌ AWS credentials not configured"; exit 1; }; \
 	EKS_CONTEXT="arn:aws:eks:$${AWS_REGION}:$${AWS_ACCOUNT_ID}:cluster/$${EKS_CLUSTER_NAME}"; \
 	HELM_CHART_REF="$(HELM_CHART)"; \
+	CHART_VERSION_ARG=""; \
+	case "$${HELM_CHART_REF}" in \
+		.|./*|/*|*://*|*.tgz) ;; \
+		*/*) \
+			if [ -z "$(HELM_CHART_VERSION)" ]; then \
+				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
+				exit 1; \
+			fi; \
+			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
+	esac; \
 	echo "Updating kubeconfig for cluster $${EKS_CLUSTER_NAME}..."; \
 	aws eks update-kubeconfig --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}"; \
-	if helm status boundary-worker -n boundary --kube-context "$${EKS_CONTEXT}" >/dev/null 2>&1; then \
-		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make eks-cleanup' first to reinstall."; \
-	else \
-		echo "Installing boundary-worker chart from '$${HELM_CHART_REF}' with EKS values..."; \
-		helm install boundary-worker "$${HELM_CHART_REF}" \
-			--namespace boundary \
-			--create-namespace \
-			--kube-context "$${EKS_CONTEXT}" \
-			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=gp3 \
-			--set worker.persistence.authStorage.storageClass=gp3 \
-			--set-file worker.config=worker.hcl \
-			--timeout 10m \
-			--rollback-on-failure; \
-	fi; \
+	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with EKS values..."; \
+	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
+		$${CHART_VERSION_ARG} \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${EKS_CONTEXT}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set worker.persistence.recording.storageClass=gp3 \
+		--set worker.persistence.authStorage.storageClass=gp3 \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--wait \
+		--atomic; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${EKS_CONTEXT}"
 	@echo ""
-	@echo "✅ Helm chart installed on EKS"
+	@echo "✅ Helm chart installed/upgraded on EKS"
 	@echo ""
 
 eks-test:
@@ -681,9 +694,10 @@ eks-full:
 	@echo "================================"
 	@echo ""
 	@echo "Using chart source: $(HELM_CHART)"
+	@echo "Using chart version: $(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup
 	@$(MAKE) worker-config
-	@$(MAKE) eks-helm HELM_CHART="$(HELM_CHART)"
+	@$(MAKE) eks-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
 	@$(MAKE) eks-test
 	@echo ""
 	@echo "✅ End-to-end EKS workflow has been completed successfully"
@@ -826,27 +840,35 @@ aks-helm:
 		--overwrite-existing; \
 	AKS_CONTEXT="$${AKS_CLUSTER_NAME}"; \
 	HELM_CHART_REF="$(HELM_CHART)"; \
+	CHART_VERSION_ARG=""; \
+	case "$${HELM_CHART_REF}" in \
+		.|./*|/*|*://*|*.tgz) ;; \
+		*/*) \
+			if [ -z "$(HELM_CHART_VERSION)" ]; then \
+				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
+				exit 1; \
+			fi; \
+			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
+	esac; \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"; \
-	if helm status boundary-worker -n boundary --kube-context "$${AKS_CONTEXT}" >/dev/null 2>&1; then \
-		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make aks-cleanup' first to reinstall."; \
-	else \
-		echo "Installing boundary-worker chart from '$${HELM_CHART_REF}' with AKS values..."; \
-		helm install boundary-worker "$${HELM_CHART_REF}" \
-			--namespace boundary \
-			--create-namespace \
-			--kube-context "$${AKS_CONTEXT}" \
-			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
-			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
-			--set-file worker.config=worker.hcl \
-			--timeout 10m \
-			--rollback-on-failure; \
-	fi; \
+	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with AKS values..."; \
+	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
+		$${CHART_VERSION_ARG} \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${AKS_CONTEXT}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
+		--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--wait \
+		--atomic; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${AKS_CONTEXT}"
 	@echo ""
-	@echo "✅ Helm chart installed on AKS"
+	@echo "✅ Helm chart installed/upgraded on AKS"
 	@echo ""
 
 aks-test:
@@ -874,9 +896,10 @@ aks-full:
 	@echo "================================"
 	@echo ""
 	@echo "Using chart source: $(HELM_CHART)"
+	@echo "Using chart version: $(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup-aks
 	@$(MAKE) worker-config
-	@$(MAKE) aks-helm HELM_CHART="$(HELM_CHART)"
+	@$(MAKE) aks-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
 	@$(MAKE) aks-test
 	@echo ""
 	@echo "✅ End-to-end AKS workflow has been completed successfully"
@@ -1051,27 +1074,35 @@ gke-helm:
 		--project "$${GCP_PROJECT_ID}"; \
 	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
 	HELM_CHART_REF="$(HELM_CHART)"; \
+	CHART_VERSION_ARG=""; \
+	case "$${HELM_CHART_REF}" in \
+		.|./*|/*|*://*|*.tgz) ;; \
+		*/*) \
+			if [ -z "$(HELM_CHART_VERSION)" ]; then \
+				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
+				exit 1; \
+			fi; \
+			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
+	esac; \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-standard-rwo}"; \
-	if helm status boundary-worker -n boundary --kube-context "$${GKE_CONTEXT}" >/dev/null 2>&1; then \
-		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make gke-cleanup' first to reinstall."; \
-	else \
-		echo "Installing boundary-worker chart from '$${HELM_CHART_REF}' with GKE values..."; \
-		helm install boundary-worker "$${HELM_CHART_REF}" \
-			--namespace boundary \
-			--create-namespace \
-			--kube-context "$${GKE_CONTEXT}" \
-			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
-			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
-			--set-file worker.config=worker.hcl \
-			--timeout 10m \
-			--rollback-on-failure; \
-	fi; \
+	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with GKE values..."; \
+	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
+		$${CHART_VERSION_ARG} \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${GKE_CONTEXT}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
+		--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--wait \
+		--atomic; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${GKE_CONTEXT}"
 	@echo ""
-	@echo "✅ Helm chart installed on GKE"
+	@echo "✅ Helm chart installed/upgraded on GKE"
 	@echo ""
 
 gke-test:
@@ -1092,9 +1123,10 @@ gke-full:
 	@echo "================================"
 	@echo ""
 	@echo "Using chart source: $(HELM_CHART)"
+	@echo "Using chart version: $(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup-gke
 	@$(MAKE) worker-config
-	@$(MAKE) gke-helm HELM_CHART="$(HELM_CHART)"
+	@$(MAKE) gke-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
 	@$(MAKE) gke-test
 	@echo ""
 	@echo "✅ End-to-end GKE workflow has been completed successfully"
