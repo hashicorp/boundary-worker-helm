@@ -34,7 +34,16 @@ worker:
         type = ["worker", "egress"]
       }
 
+
       controller_generated_activation_token = "controller-led-activation-token-here" # Optional: set when using controller-led worker registration. Requires setting the token value via Kubernetes Secret and referencing it with worker.extraEnv or worker.secretRefs. If not set, the worker will attempt to register without a token, which only works if the Boundary Controller is configured to allow tokenless registration.
+      # Token can be provided in three ways:
+      #   1. Plaintext:   set the value directly above (e.g. "act_1234abcd...")
+      #   2. Kubernetes Secret (secretRefs): set the value above to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+      #                   and set secretRefs.secretName pointing to a Secret that contains the token key.
+      #   3. extraEnv:    set the value above to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+      #                   and supply the token via extraEnv:
+      #                     - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+      #                       value: "act_1234abcd..."
     }
 
     # hcp_boundary_cluster_id = "your-cluster-id-here" # Optional: set when registering with HCP Boundary.

@@ -200,7 +200,7 @@ Validate manual Secret existence and required keys.
 Runs only when secretRefs.validateExisting=true and secretRefs.secretName is set.
 */}}
 {{- define "boundary.worker.validateSecretRefs" -}}
-{{- if and .Values.secretRefs.validateExisting .Values.secretRefs.secretName }}
+{{- if and .Values.secretRefs.validateExisting .Values.secretRefs.secretName (eq (include "boundary.worker.usesEnvActivationToken" .) "true") }}
 {{- $secretName := include "boundary.worker.secretName" . | trim -}}
 {{- if eq $secretName "" }}
 {{- fail "secretRefs.secretName resolved to empty value" }}
