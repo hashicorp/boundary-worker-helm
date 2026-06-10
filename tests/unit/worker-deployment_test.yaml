@@ -346,6 +346,10 @@ tests:
   - it: should inject activation token env when secretRefs.secretName is set
     template: worker-deployment.yaml
     set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+        }
       secretRefs:
         secretName: boundary-worker-runtime
         keys:
@@ -556,6 +560,10 @@ tests:
   - it: should inject both secretRefs and extraEnv when both are set
     template: worker-deployment.yaml
     set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+        }
       secretRefs:
         secretName: my-secret
         keys:
