@@ -1259,6 +1259,102 @@ tf-destroy:
 	@echo "⚠️  This will delete the EKS cluster, VPC, node groups, IAM roles, and all associated resources."
 	@echo ""
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@STATE_FILE="tests/integration/terraform/aws/terraform.tfstate"; \
+	if [ ! -f "$$STATE_FILE" ]; then \
+		echo "❌ Terraform state file not found: $$STATE_FILE"; \
+		echo "   The cluster may have been provisioned outside this workspace, or state was lost."; \
+		echo "   Use 'make eks-cleanup' with manual AWS CLI cleanup if the cluster still exists."; \
+		exit 1; \
+	fi; \
+	RESOURCE_COUNT=$$(python3 -c "import json,sys; d=json.load(open('$$STATE_FILE')); print(len(d.get('resources', [])))" 2>/dev/null || echo 0); \
+	if [ "$$RESOURCE_COUNT" = "0" ]; then \
+		echo "⚠️  Terraform state is empty (0 resources tracked)."; \
+		echo "   terraform destroy would exit 0 without deleting anything."; \
+		echo ""; \
+		CLUSTER_NAME="$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"; \
+		CLUSTER_STATUS=$$(aws eks describe-cluster --name "$$CLUSTER_NAME" --region "$${AWS_REGION}" \
+			--query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND"); \
+		if [ "$$CLUSTER_STATUS" = "NOT_FOUND" ] || [ "$$CLUSTER_STATUS" = "None" ]; then \
+			echo "✅ Cluster '$$CLUSTER_NAME' not found in AWS — already deleted."; \
+			exit 0; \
+		else \
+			echo "⚠️  Terraform state is out of sync — falling back to direct AWS CLI cleanup."; \
+			echo ""; \
+			VPC_ID=$$(aws eks describe-cluster --name "$$CLUSTER_NAME" --region "$${AWS_REGION}" \
+				--query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || echo ""); \
+			echo "--- Deleting node groups for cluster '$$CLUSTER_NAME' ---"; \
+			for ng in $$(aws eks list-nodegroups --cluster-name "$$CLUSTER_NAME" --region "$${AWS_REGION}" \
+				--query 'nodegroups[*]' --output text | tr '\t' '\n'); do \
+				echo "  Deleting node group: $$ng"; \
+				aws eks delete-nodegroup --cluster-name "$$CLUSTER_NAME" --nodegroup-name "$$ng" \
+					--region "$${AWS_REGION}" --output json > /dev/null; \
+				echo "  Waiting for node group '$$ng' to be deleted..."; \
+				aws eks wait nodegroup-deleted --cluster-name "$$CLUSTER_NAME" \
+					--nodegroup-name "$$ng" --region "$${AWS_REGION}"; \
+				echo "  ✅ Node group '$$ng' deleted"; \
+			done; \
+			echo "--- Deleting NAT Gateways in VPC '$$VPC_ID' ---"; \
+			for nat in $$(aws ec2 describe-nat-gateways --region "$${AWS_REGION}" \
+				--filter "Name=vpc-id,Values=$$VPC_ID" "Name=state,Values=available,pending" \
+				--query 'NatGateways[*].NatGatewayId' --output text | tr '\t' '\n'); do \
+				EIP=$$(aws ec2 describe-nat-gateways --region "$${AWS_REGION}" \
+					--nat-gateway-ids "$$nat" \
+					--query 'NatGateways[0].NatGatewayAddresses[0].AllocationId' --output text 2>/dev/null); \
+				echo "  Deleting NAT Gateway: $$nat"; \
+				aws ec2 delete-nat-gateway --nat-gateway-id "$$nat" --region "$${AWS_REGION}" > /dev/null; \
+				aws ec2 wait nat-gateway-deleted --nat-gateway-ids "$$nat" --region "$${AWS_REGION}"; \
+				echo "  ✅ NAT Gateway deleted"; \
+				if [ -n "$$EIP" ] && [ "$$EIP" != "None" ]; then \
+					aws ec2 release-address --allocation-id "$$EIP" --region "$${AWS_REGION}" 2>/dev/null \
+						&& echo "  ✅ EIP $$EIP released" || echo "  ⚠️  Could not release EIP $$EIP (may be shared)"; \
+				fi; \
+			done; \
+			echo "--- Deleting EKS cluster '$$CLUSTER_NAME' ---"; \
+			aws eks delete-cluster --name "$$CLUSTER_NAME" --region "$${AWS_REGION}" > /dev/null; \
+			aws eks wait cluster-deleted --name "$$CLUSTER_NAME" --region "$${AWS_REGION}"; \
+			echo "✅ Cluster deleted"; \
+			if [ -n "$$VPC_ID" ] && [ "$$VPC_ID" != "None" ]; then \
+				echo "--- Cleaning up VPC '$$VPC_ID' ---"; \
+				for igw in $$(aws ec2 describe-internet-gateways --region "$${AWS_REGION}" \
+					--filters "Name=attachment.vpc-id,Values=$$VPC_ID" \
+					--query 'InternetGateways[*].InternetGatewayId' --output text | tr '\t' '\n'); do \
+					aws ec2 detach-internet-gateway --internet-gateway-id "$$igw" --vpc-id "$$VPC_ID" --region "$${AWS_REGION}" 2>/dev/null || true; \
+					aws ec2 delete-internet-gateway --internet-gateway-id "$$igw" --region "$${AWS_REGION}" && echo "  ✅ IGW $$igw deleted"; \
+				done; \
+				for subnet in $$(aws ec2 describe-subnets --region "$${AWS_REGION}" \
+					--filters "Name=vpc-id,Values=$$VPC_ID" \
+					--query 'Subnets[*].SubnetId' --output text | tr '\t' '\n'); do \
+					aws ec2 delete-subnet --subnet-id "$$subnet" --region "$${AWS_REGION}" 2>/dev/null && echo "  ✅ Subnet $$subnet deleted" || true; \
+				done; \
+				for rt in $$(aws ec2 describe-route-tables --region "$${AWS_REGION}" \
+					--filters "Name=vpc-id,Values=$$VPC_ID" \
+					--query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | tr '\t' '\n'); do \
+					aws ec2 delete-route-table --route-table-id "$$rt" --region "$${AWS_REGION}" 2>/dev/null && echo "  ✅ Route table $$rt deleted" || true; \
+				done; \
+				for sg in $$(aws ec2 describe-security-groups --region "$${AWS_REGION}" \
+					--filters "Name=vpc-id,Values=$$VPC_ID" \
+					--query "SecurityGroups[?GroupName!='default'].GroupId" --output text | tr '\t' '\n'); do \
+					INGRESS=$$(aws ec2 describe-security-groups --region "$${AWS_REGION}" --group-ids "$$sg" \
+						--query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null); \
+					[ "$$INGRESS" != "[]" ] && [ -n "$$INGRESS" ] && \
+						aws ec2 revoke-security-group-ingress --group-id "$$sg" --region "$${AWS_REGION}" \
+							--ip-permissions "$$INGRESS" > /dev/null 2>/dev/null || true; \
+					EGRESS=$$(aws ec2 describe-security-groups --region "$${AWS_REGION}" --group-ids "$$sg" \
+						--query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null); \
+					[ "$$EGRESS" != "[]" ] && [ -n "$$EGRESS" ] && \
+						aws ec2 revoke-security-group-egress --group-id "$$sg" --region "$${AWS_REGION}" \
+							--ip-permissions "$$EGRESS" > /dev/null 2>/dev/null || true; \
+					aws ec2 delete-security-group --group-id "$$sg" --region "$${AWS_REGION}" 2>/dev/null \
+						&& echo "  ✅ SG $$sg deleted" || echo "  ⚠️  SG $$sg skipped"; \
+				done; \
+				aws ec2 delete-vpc --vpc-id "$$VPC_ID" --region "$${AWS_REGION}" \
+					&& echo "✅ VPC $$VPC_ID deleted" || echo "❌ VPC $$VPC_ID could not be deleted — check for remaining dependencies"; \
+			fi; \
+			echo ""; \
+			echo "✅ Manual AWS CLI cleanup complete"; \
+			exit 0; \
+		fi; \
+	fi
 	@cd tests/integration/terraform/aws && \
 		terraform destroy -auto-approve \
 			-var="aws_region=$${AWS_REGION}" \
