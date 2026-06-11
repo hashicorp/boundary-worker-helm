@@ -13,6 +13,22 @@ HELM_CHART ?= .
 # Required only when HELM_CHART is a repo/chart reference.
 HELM_CHART_VERSION ?=
 
+# Resolves HELM_CHART_REF and CHART_VERSION_ARG for cloud install targets.
+# HELM_CHART_VERSION is required only when HELM_CHART is a repo/chart reference.
+define resolve_chart_version_arg
+	HELM_CHART_REF="$(HELM_CHART)"; \
+	CHART_VERSION_ARG=""; \
+	case "$${HELM_CHART_REF}" in \
+		.|./*|/*|*://*|*.tgz) ;; \
+		*/*) \
+			if [ -z "$(HELM_CHART_VERSION)" ]; then \
+				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
+				exit 1; \
+			fi; \
+			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
+	esac
+endef
+
 # ================================
 # PHONY Declarations
 # ================================
@@ -643,17 +659,7 @@ eks-helm:
 	@AWS_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || \
 		{ echo "❌ AWS credentials not configured"; exit 1; }; \
 	EKS_CONTEXT="arn:aws:eks:$${AWS_REGION}:$${AWS_ACCOUNT_ID}:cluster/$${EKS_CLUSTER_NAME}"; \
-	HELM_CHART_REF="$(HELM_CHART)"; \
-	CHART_VERSION_ARG=""; \
-	case "$${HELM_CHART_REF}" in \
-		.|./*|/*|*://*|*.tgz) ;; \
-		*/*) \
-			if [ -z "$(HELM_CHART_VERSION)" ]; then \
-				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
-				exit 1; \
-			fi; \
-			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
-	esac; \
+	$(resolve_chart_version_arg); \
 	echo "Updating kubeconfig for cluster $${EKS_CLUSTER_NAME}..."; \
 	aws eks update-kubeconfig --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}"; \
 	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with EKS values..."; \
@@ -839,17 +845,7 @@ aks-helm:
 		--name "$${AKS_CLUSTER_NAME}" \
 		--overwrite-existing; \
 	AKS_CONTEXT="$${AKS_CLUSTER_NAME}"; \
-	HELM_CHART_REF="$(HELM_CHART)"; \
-	CHART_VERSION_ARG=""; \
-	case "$${HELM_CHART_REF}" in \
-		.|./*|/*|*://*|*.tgz) ;; \
-		*/*) \
-			if [ -z "$(HELM_CHART_VERSION)" ]; then \
-				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
-				exit 1; \
-			fi; \
-			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
-	esac; \
+	$(resolve_chart_version_arg); \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"; \
 	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with AKS values..."; \
 	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
@@ -1073,17 +1069,7 @@ gke-helm:
 		--zone "$${GKE_ZONE}" \
 		--project "$${GCP_PROJECT_ID}"; \
 	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
-	HELM_CHART_REF="$(HELM_CHART)"; \
-	CHART_VERSION_ARG=""; \
-	case "$${HELM_CHART_REF}" in \
-		.|./*|/*|*://*|*.tgz) ;; \
-		*/*) \
-			if [ -z "$(HELM_CHART_VERSION)" ]; then \
-				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
-				exit 1; \
-			fi; \
-			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
-	esac; \
+	$(resolve_chart_version_arg); \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-standard-rwo}"; \
 	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with GKE values..."; \
 	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
