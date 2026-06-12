@@ -8,8 +8,7 @@
 #     -f values.openshift.yaml \
 #     --set-file worker.config=./worker.hcl
 
-# Placeholder image until an official OpenShift-certified image is published.
-# Replace with the official Red Hat registry image once available.
+# TODO: remove before merging — replace with official OpenShift-certified image when available.
 image:
   repository: public.ecr.aws/g0u5x5a3/boundary-ent
   tag: "0.21.0-ubi-arm64"

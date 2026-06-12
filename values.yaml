@@ -93,6 +93,7 @@ worker:
       # - Using ClusterIP with an Ingress controller
       # - Setting scheme to "internal" in annotations
       # - Implementing network policies
+      # Note: ignored when openshift.enabled=true — the proxy port is exposed via a Route instead.
       type: LoadBalancer
       port: 9202
       targetPort: 9202

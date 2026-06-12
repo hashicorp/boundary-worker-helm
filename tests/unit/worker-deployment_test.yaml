@@ -583,8 +583,6 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[3].name
           value: EXTRA_VAR
-          path: spec.selector.matchLabels["app.kubernetes.io/component"]
-          value: worker
 
   # ============================================================================
   # OPENSHIFT SECURITY CONTEXT TESTS

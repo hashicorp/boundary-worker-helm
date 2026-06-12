@@ -12,6 +12,14 @@ on:
         description: "Run acceptance tests"
         type: boolean
         default: false
+      run_openshift_acceptance:
+        description: "Run OpenShift acceptance tests"
+        type: boolean
+        default: false
+      ocp_storage_class:
+        description: "OpenShift storage class override"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -133,6 +141,7 @@ jobs:
     name: Acceptance Test
     runs-on: ubuntu-latest
     needs: unit-test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_acceptance == 'true'
     env:
       BOUNDARY_ADDR: ${{ secrets.BOUNDARY_ADDR }}
       BOUNDARY_AUTH_METHOD_ID: ${{ secrets.BOUNDARY_AUTH_METHOD_ID }}
@@ -159,4 +168,50 @@ jobs:
       - name: Cleanup
         if: always()
         run: make acceptance-cleanup
+
+  openshift-acceptance-test:
+    name: OpenShift Acceptance Test
+    runs-on: ubuntu-latest
+    needs: unit-test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_openshift_acceptance == 'true'
+    env:
+      BOUNDARY_ADDR: ${{ secrets.BOUNDARY_ADDR }}
+      BOUNDARY_AUTH_METHOD_ID: ${{ secrets.BOUNDARY_AUTH_METHOD_ID }}
+      BOUNDARY_CLUSTER_ID: ${{ secrets.BOUNDARY_CLUSTER_ID }}
+      BOUNDARY_LOGIN_NAME: ${{ secrets.BOUNDARY_LOGIN_NAME }}
+      BOUNDARY_PASSWORD: ${{ secrets.BOUNDARY_PASSWORD }}
+      BOUNDARY_TARGET_ID: ${{ secrets.BOUNDARY_TARGET_ID }}
+      OCP_STORAGE_CLASS: ${{ github.event.inputs.ocp_storage_class }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install oc CLI
+        run: |
+          curl -Lo /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+          sudo tar -xzf /tmp/oc.tar.gz -C /usr/local/bin oc
+          oc version --client
+
+      - name: Setup Helm
+        run: make setup-helm
+
+      - name: Install Boundary CLI
+        run: |
+          wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt update && sudo apt install -y boundary
+          boundary version
+
+      - name: Login to OpenShift cluster
+        run: |
+          oc login "${{ secrets.OCP_SERVER }}" \
+            --token="${{ secrets.OCP_TOKEN }}" \
+            --insecure-skip-tls-verify=true
+
+      - name: Run OpenShift acceptance tests
+        run: make openshift-acceptance-full
+
+      - name: Cleanup
+        if: always()
+        run: make openshift-acceptance-cleanup
 
