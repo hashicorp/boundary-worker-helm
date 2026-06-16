@@ -2,11 +2,17 @@
 
 # Default values for Boundary Worker Helm Chart
 
+nameOverride: ""
+fullnameOverride: ""
+namespace: ""
+
 # Boundary image configuration
 image:
   repository: hashicorp/boundary-enterprise
   tag: ""  # Defaults to Chart.appVersion (eg 0.21-ent) when empty
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 # Worker configuration
 worker:
@@ -90,11 +96,7 @@ worker:
       type: LoadBalancer
       port: 9202
       targetPort: 9202
-      annotations:
-        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-        service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
-        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      annotations: {}
     ops:
       enabled: true
       type: ClusterIP
@@ -122,13 +124,9 @@ worker:
       storageClass: ""  # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/var/lib/boundary"
 
-# Namespace to deploy resources into, keep empty to use the namespace provided via --namespace flag during helm install/upgrade
-namespace: ""
-
 # Secret References
-# Sensitive values consumed by the worker pod via valueFrom.secretKeyRef.
-# The activation token key is only required when worker.config uses
-# env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN.
+# Injects values from an existing Kubernetes Secret via secretKeyRef.
+# Set secretName and point worker.config token to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN".
 secretRefs:
   secretName: ""
   validateExisting: false
@@ -178,7 +176,6 @@ serviceAccount:
   automountServiceAccountToken: false  # Set to true when using IRSA or Workload Identity
 
 # Optional configurations
-imagePullSecrets: []
 podAnnotations: {}
 nodeSelector: {}
 tolerations: []
