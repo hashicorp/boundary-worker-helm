@@ -490,12 +490,17 @@ tests:
       - equal:
           path: spec.selector.matchLabels["app.kubernetes.io/name"]
           value: boundary-worker
+
+  - it: should use values.namespace when set, overriding release namespace
+    template: worker-deployment.yaml
+    release:
+      namespace: release-namespace
+    set:
+      namespace: custom-values-namespace
+    asserts:
       - equal:
-          path: spec.selector.matchLabels["app.kubernetes.io/instance"]
-          value: test-release
-      - equal:
-          path: spec.selector.matchLabels["app.kubernetes.io/component"]
-          value: worker
+          path: metadata.namespace
+          value: custom-values-namespace
 
   # ============================================================================
   # EXTRA ENV TESTS

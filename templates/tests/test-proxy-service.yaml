@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: "{{ include "boundary.fullname" . }}-test-proxy-service"
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "boundary.namespace" . }}
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: test
@@ -34,7 +34,7 @@ spec:
       echo "=========================================="
       
       SERVICE_NAME="{{ include "boundary.worker.proxy.serviceName" . }}"
-      NAMESPACE="{{ .Release.Namespace }}"
+      NAMESPACE="{{ include "boundary.namespace" . }}"
       EXPECTED_TYPE="{{ .Values.worker.service.proxy.type }}"
       EXPECTED_PORT="{{ .Values.worker.service.proxy.port }}"
       
