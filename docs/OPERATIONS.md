@@ -20,6 +20,7 @@ The chart does not manage controller resources, Boundary scopes, worker resource
 - [What The Chart Deploys](#what-the-chart-deploys)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
+- [Secret Creation And Usage](#secret-creation-and-usage)
 - [Configuration Model](#configuration-model)
 - [Required Worker Configuration](#required-worker-configuration)
 - [Public Address And Service Exposure](#public-address-and-service-exposure)
@@ -61,18 +62,20 @@ The worker pod runs the official Boundary Enterprise image and starts Boundary w
 Before installing the chart, make sure the following are in place:
 
 - A Kubernetes cluster with dynamic or pre-provisioned PersistentVolumes
-- Helm 3.x
+- Helm v3 and above
 - Network connectivity from the worker pod to the appropriate Boundary upstreams or controllers
 - A Boundary worker configuration file in HCL format
 - A registration workflow chosen in advance:
-	- Controller-led registration with an activation token
-	- Worker-led registration using information emitted in pod logs during initial startup, followed by explicit registration or authorization with the controller
-	- KMS-backed worker authentication for self-managed Boundary deployments configured for it
+    - Controller-led registration with an activation token
+    - Worker-led registration using information emitted in pod logs during initial startup, followed by explicit registration or authorization with the controller
+    - KMS-backed worker authentication for self-managed Boundary deployments configured for it
+    - A PVC if persistent storage is required
 
 Additional requirements for intermediate worker capabilities:
 
 - A routable external endpoint if the worker must be reached from outside the cluster
 - Cluster support for the selected proxy Service type, such as `LoadBalancer`
+- If you use controller-led registration with an activation token, create a Kubernetes Secret for the token
 
 ## Installation
 
@@ -94,8 +97,8 @@ Note: `--set-file worker.config=...` is still supported if you prefer to keep th
 
 At minimum, set:
 
-- Any of the three registration mechanisms: controller-led, worker-led , or KMS based registration
-- Your `hcp_boundary_cluster_id` or upstream endpoint using `initial_upstreams`
+- Any of the three registration mechanisms: controller-led, worker-led, or KMS-based registration
+- Your `hcp_boundary_cluster_id` or upstream endpoint using `initial_upstreams` (KMS auth is only supported for self-hosted upstreams)
 - `public_addr` if the worker must be reachable from outside the cluster or by upstream workers
 - Storage paths that match the chart values if you override the defaults
 
@@ -151,13 +154,23 @@ worker:
 			storageClass: gp3
 ```
 
-### 3. Create the namespace
+### 3. Secret creation and usage
+
+Create the Kubernetes Secret used by `secretRefs` before installing the chart:
+
+```bash
+kubectl create secret generic boundary-worker-secrets \
+	--namespace boundary \
+	--from-literal=worker-controller-generated-activation-token='<activation-token>'
+```
+
+### 4. Create the namespace
 
 ```bash
 kubectl create namespace boundary
 ```
 
-### 4. Install the chart
+### 5. Install the chart
 
 Install using the default values in `values.yaml`. 
 Before running this command, replace any placeholders in `worker.config`.
@@ -165,54 +178,56 @@ Before running this command, replace any placeholders in `worker.config`.
 ```bash
 helm install boundary-worker . \
 	--namespace boundary \
-	--create-namespace
+	--create-namespace \
+	--wait \
+	--rollback-on-failure
 ```
 
 Install with an additional values file containing your worker config and overrides:
 
 ```bash
-kubectl create secret generic boundary-worker-secrets \
-	--namespace boundary \
-	--from-literal=worker-controller-generated-activation-token='<activation-token>'
-
 helm install boundary-worker . \
-	--namespace boundary \
-	--create-namespace \
-	-f my-values.yaml
+    --namespace boundary \
+    --create-namespace \
+	--wait \
+	--rollback-on-failure \
+    --values my-values.yaml
 ```
 
-### 5. Verify the deployment
+### 6. Verify the deployment
 
 ```bash
-kubectl get pods -n boundary
-kubectl get pvc -n boundary
-kubectl get svc -n boundary
-kubectl logs -n boundary deployment/boundary-worker-deployment
+kubectl get pods --namespace boundary
+kubectl get pvc --namespace boundary
+kubectl get svc --namespace boundary
+kubectl logs --namespace boundary deployment/boundary-worker-deployment
 ```
 
 Confirm that:
 
 - The pod becomes ready
-- The auth storage PVC's are bound if enabled'
+- The auth storage PVCs are bound if enabled
 - The proxy and ops Services match your intended exposure model
 - The worker appears in Boundary and becomes eligible for session assignment
 
-### 6. If you use a LoadBalancer, update `public_addr` if needed
+### 7. If you use a LoadBalancer, update `public_addr` if needed
 
 If the proxy Service is exposed through `LoadBalancer`, Kubernetes may assign the external hostname or IP only after installation.
 
 Check the Service:
 
 ```bash
-kubectl get svc boundary-worker-proxy -n boundary
+kubectl get svc boundary-worker-proxy --namespace boundary
 ```
 
 If your worker config needs to be updated with that final address, edit `worker.config` in your values file and upgrade the release:
 
 ```bash
 helm upgrade boundary-worker . \
-	--namespace boundary \
-	-f my-values.yaml
+    --namespace boundary \
+	--wait \
+	--rollback-on-failure \
+    --values my-values.yaml
 ```
 
 ## Configuration Model
@@ -258,7 +273,7 @@ At minimum, a usable worker config usually includes:
 - Worker registration settings such as a controller-generated activation token, worker-led registration settings, or KMS worker-auth configuration
 - Controller connection settings such as `initial_upstreams` or `hcp_boundary_cluster_id`, depending on your deployment model
 - Public addresses reachable by clients or upstream workers when your topology requires them
-- Storage paths that match the chart values if you override the defaults
+- PVC is required if appropriate config is used and storage paths that match the chart values if you override the defaults
 
 Example:
 
@@ -379,10 +394,12 @@ Typical flow:
 Example:
 
 ```bash
-kubectl get svc boundary-worker-proxy -n boundary -w
+kubectl get svc boundary-worker-proxy --namespace boundary --watch
 
 helm upgrade boundary-worker . \
 	--namespace boundary \
+	--wait \
+	--rollback-on-failure \
 	--reuse-values \
 	--set-file worker.config=./intermediate-worker.hcl
 ```
@@ -450,12 +467,13 @@ For controller-led registration:
 2. Obtain the activation token.
 3. Create a Kubernetes Secret containing the activation token under the key configured by `secretRefs.keys.controllerGeneratedActivationToken`.
 4. Reference `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN` in `worker.config`.
-5. Install the chart.
-6. Verify the worker registers and persists its credentials to auth storage.
+5. Ensure auth storage PVC is enabled.
+6. Install the chart.
+7. Verify the worker registers and persists its credentials to auth storage.
 
 ### KMS-backed worker authentication
 
-For KMS-based worker authentication in self-managed Boundary deployments:
+For KMS-based worker authentication in self-managed Boundary deployments, only when using self-hosted upstreams:
 
 1. Configure worker authentication through Boundary with KMS worker auth enabled.
 2. Add the required `kms "worker-auth"` configuration and related worker settings to the HCL file.
@@ -546,9 +564,11 @@ Install with both an override file and the worker HCL file:
 
 ```bash
 helm install boundary-worker . \
-	--namespace boundary \
-	-f values.yaml \
-	--set-file worker.config=./worker.hcl
+    --namespace boundary \
+	--wait \
+	--rollback-on-failure \
+    --values values.yaml \
+    --set-file worker.config=./worker.hcl
 ```
 
 ## Operations
@@ -556,13 +576,13 @@ helm install boundary-worker . \
 ### Check release resources
 
 ```bash
-kubectl get deployment,pods,svc,pvc -n boundary
+kubectl get deployment,pods,svc,pvc --namespace boundary
 ```
 
 ### Inspect worker logs
 
 ```bash
-kubectl logs -n boundary deployment/boundary-worker-deployment
+kubectl logs --namespace boundary deployment/boundary-worker-deployment
 ```
 
 ### Upgrade configuration
@@ -570,6 +590,8 @@ kubectl logs -n boundary deployment/boundary-worker-deployment
 ```bash
 helm upgrade boundary-worker . \
 	--namespace boundary \
+	--wait \
+	--rollback-on-failure \
 	--reuse-values \
 	--set-file worker.config=./worker.hcl
 ```
@@ -581,6 +603,8 @@ This is also the command to use after Kubernetes assigns a proxy Service load ba
 ```bash
 helm upgrade boundary-worker . \
 	--namespace boundary \
+	--wait \
+	--rollback-on-failure \
 	--reuse-values \
 	--set image.tag=0.21.1-ent \
 	--set-file worker.config=./worker.hcl
@@ -589,14 +613,14 @@ helm upgrade boundary-worker . \
 ### Roll back a release
 
 ```bash
-helm history boundary-worker -n boundary
-helm rollback boundary-worker <revision> -n boundary
+helm history boundary-worker --namespace boundary
+helm rollback boundary-worker <revision> --namespace boundary --wait
 ```
 
 ### Uninstall
 
 ```bash
-helm uninstall boundary-worker -n boundary
+helm uninstall boundary-worker --namespace boundary
 ```
 
 By default, the pod receives a `SIGTERM` and has the configured grace period to shut down. Because the chart runs a single replica, upgrades and deletes can interrupt in-flight sessions.
@@ -608,7 +632,7 @@ The worker exposes an ops listener at port 9203. The ops Service (`boundary-work
 ### Health check
 
 ```bash
-kubectl port-forward -n boundary svc/boundary-worker-ops 9203:9203
+kubectl port-forward --namespace boundary svc/boundary-worker-ops 9203:9203
 curl http://localhost:9203/health
 ```
 
@@ -617,7 +641,7 @@ curl http://localhost:9203/health
 Metrics are available at the `/metrics` path on the ops listener:
 
 ```bash
-kubectl port-forward -n boundary svc/boundary-worker-ops 9203:9203
+kubectl port-forward --namespace boundary svc/boundary-worker-ops 9203:9203
 curl http://localhost:9203/metrics
 ```
 
@@ -648,7 +672,7 @@ The default `worker.config` emits all event types to stderr in CloudEvents JSON 
 events {
   audit_enabled       = true
   sysevents_enabled   = true
-  observations_enable = true
+    observations_enabled = true
   sink "stderr" {
     name        = "all-events"
     event_types = ["*"]
@@ -660,14 +684,14 @@ events {
 Filter by event type using `jq`:
 
 ```bash
-kubectl logs -n boundary deployment/boundary-worker-deployment \
+kubectl logs --namespace boundary deployment/boundary-worker-deployment \
   | jq 'select(.type | startswith("audit"))'
 ```
 
 ### Checking resource usage
 
 ```bash
-kubectl top pod -n boundary -l app.kubernetes.io/name=boundary-worker
+kubectl top pod --namespace boundary -l app.kubernetes.io/name=boundary-worker
 ```
 
 ## Security Model
