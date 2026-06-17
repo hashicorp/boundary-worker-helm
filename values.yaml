@@ -2,11 +2,17 @@
 
 # Default values for Boundary Worker Helm Chart
 
+nameOverride: ""
+fullnameOverride: ""
+namespace: ""
+
 # Boundary image configuration
 image:
   repository: hashicorp/boundary-enterprise
   tag: ""  # Defaults to Chart.appVersion (eg 0.21-ent) when empty
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 # Worker configuration
 worker:
@@ -25,26 +31,28 @@ worker:
     }
 
     worker {
-      auth_storage_path = "/var/lib/boundary"
-      recording_storage_path = "/boundary/recording"
+      name = "boundary-worker" # Optional: must be set for kms registration.
+      initial_upstreams = [] # Optional: set when the controller is self-managed.
+      public_addr = "" # Optional: Set the worker's public address to make it reachable by clients.
+      auth_storage_path = "/var/lib/boundary" # Optional: set when using token based worker registration.
+      recording_storage_path = "/boundary/recording" # Optional: set when using session recording.
       tags {
         type = ["worker", "egress"]
       }
 
-      # ⚠️ REQUIRED: You MUST set ONE of the following registration methods:
-      # Option 1: Controller-generated activation token (recommended for HCP Boundary)
-      # controller_generated_activation_token = "your-activation-token-here"
-      
-      # Option 2: Worker-led registration (requires manual authorization on controller)
-      # Leave activation token unset and use worker auth information from logs
+
+      controller_generated_activation_token = "controller-led-activation-token-here" # Optional: set when using controller-led worker registration. Requires setting the token value via Kubernetes Secret and referencing it with worker.extraEnv or worker.secretRefs. If not set, the worker will attempt to register without a token, which only works if the Boundary Controller is configured to allow tokenless registration.
+      # Token can be provided in three ways:
+      #   1. Plaintext:   set the value directly above (e.g. "act_1234abcd...")
+      #   2. Kubernetes Secret (secretRefs): set the value above to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+      #                   and set secretRefs.secretName pointing to a Secret that contains the token key.
+      #   3. extraEnv:    set the value above to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+      #                   and supply the token via extraEnv:
+      #                     - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+      #                       value: "act_1234abcd..."
     }
 
-    # ⚠️ REQUIRED: You MUST set ONE of the following connection methods:
-    # Option 1: HCP Boundary cluster ID
-    # hcp_boundary_cluster_id = "your-cluster-id-here"
-    
-    # Option 2: Self-managed Boundary with initial upstreams
-    # initial_upstreams = ["boundary-controller.boundary.svc.cluster.local:9201"]
+    # hcp_boundary_cluster_id = "your-cluster-id-here" # Optional: set when registering with HCP Boundary.
 
     events {
       audit_enabled        = true
@@ -88,11 +96,7 @@ worker:
       type: LoadBalancer
       port: 9202
       targetPort: 9202
-      annotations:
-        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-        service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
-        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      annotations: {}
     ops:
       enabled: true
       type: ClusterIP
@@ -120,8 +124,22 @@ worker:
       storageClass: ""  # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/var/lib/boundary"
 
-# Namespace to deploy resources into, keep empty to use the namespace provided via --namespace flag during helm install/upgrade
-namespace: ""
+# Secret References
+# Injects values from an existing Kubernetes Secret via secretKeyRef.
+# Set secretName and point worker.config token to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN".
+secretRefs:
+  secretName: ""
+  validateExisting: false
+  keys:
+    controllerGeneratedActivationToken: "worker-controller-generated-activation-token"
+
+# Extra environment variables to inject into the worker container.
+# Supports any valid Kubernetes env entry (name/value or name/valueFrom).
+# Example:
+#   extraEnv:
+#     - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+#       value: "my-token"
+extraEnv: []
 
 # Pod security context
 podSecurityContext:
@@ -158,7 +176,6 @@ serviceAccount:
   automountServiceAccountToken: false  # Set to true when using IRSA or Workload Identity
 
 # Optional configurations
-imagePullSecrets: []
 podAnnotations: {}
 nodeSelector: {}
 tolerations: []

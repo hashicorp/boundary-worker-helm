@@ -65,9 +65,9 @@ Before installing the chart, make sure the following are in place:
 - Network connectivity from the worker pod to the appropriate Boundary upstreams or controllers
 - A Boundary worker configuration file in HCL format
 - A registration workflow chosen in advance:
-    - Controller-led registration with an activation token
-    - Worker-led registration using information emitted in pod logs during initial startup, followed by explicit registration or authorization with the controller
-    - KMS-backed worker authentication for self-managed Boundary deployments configured for it
+	- Controller-led registration with an activation token
+	- Worker-led registration using information emitted in pod logs during initial startup, followed by explicit registration or authorization with the controller
+	- KMS-backed worker authentication for self-managed Boundary deployments configured for it
 
 Additional requirements for intermediate worker capabilities:
 
@@ -120,30 +120,35 @@ If you want overrides, create a separate values file such as `my-values.yaml`.
 Example:
 
 ```yaml
+secretRefs:
+	secretName: boundary-worker-secrets
+	keys:
+		controllerGeneratedActivationToken: worker-controller-generated-activation-token
+
 worker:
-    config: |
-        disable_mlock = true
+	config: |
+		disable_mlock = true
 
-        listener "tcp" {
-            address = "0.0.0.0:9202"
-            purpose = "proxy"
-        }
+		listener "tcp" {
+			address = "0.0.0.0:9202"
+			purpose = "proxy"
+		}
 
-        worker {
-            auth_storage_path = "/var/lib/boundary"
-            recording_storage_path = "/boundary/recording"
-            controller_generated_activation_token = "<activation-token>"
-        }
+		worker {
+			auth_storage_path = "/var/lib/boundary"
+			recording_storage_path = "/boundary/recording"
+			controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+		}
 
-        hcp_boundary_cluster_id = "<hcp-boundary-cluster-id>"
-    service:
-        proxy:
-            type: LoadBalancer
-    persistence:
-        authStorage:
-            storageClass: gp3
-        recording:
-            storageClass: gp3
+		hcp_boundary_cluster_id = "<hcp-boundary-cluster-id>"
+	service:
+		proxy:
+			type: LoadBalancer
+	persistence:
+		authStorage:
+			storageClass: gp3
+		recording:
+			storageClass: gp3
 ```
 
 ### 3. Create the namespace
@@ -159,17 +164,21 @@ Before running this command, replace any placeholders in `worker.config`.
 
 ```bash
 helm install boundary-worker . \
-    --namespace boundary \
-    --create-namespace
+	--namespace boundary \
+	--create-namespace
 ```
 
 Install with an additional values file containing your worker config and overrides:
 
 ```bash
+kubectl create secret generic boundary-worker-secrets \
+	--namespace boundary \
+	--from-literal=worker-controller-generated-activation-token='<activation-token>'
+
 helm install boundary-worker . \
-    --namespace boundary \
-    --create-namespace \
-    -f my-values.yaml
+	--namespace boundary \
+	--create-namespace \
+	-f my-values.yaml
 ```
 
 ### 5. Verify the deployment
@@ -202,8 +211,8 @@ If your worker config needs to be updated with that final address, edit `worker.
 
 ```bash
 helm upgrade boundary-worker . \
-    --namespace boundary \
-    -f my-values.yaml
+	--namespace boundary \
+	-f my-values.yaml
 ```
 
 ## Configuration Model
@@ -257,31 +266,33 @@ Example:
 disable_mlock = true
 
 listener "tcp" {
-    address = "0.0.0.0:9202"
-    purpose = "proxy"
+	address = "0.0.0.0:9202"
+	purpose = "proxy"
 }
 
 listener "tcp" {
-    address     = "0.0.0.0:9203"
-    purpose     = "ops"
-    tls_disable = true
+	address     = "0.0.0.0:9203"
+	purpose     = "ops"
+	tls_disable = true
 }
 
 worker {
-    name                   = "k8s-worker-${POD_NAME_LOWER}"
-    public_addr            = "worker.example.com:9202"
-    auth_storage_path      = "/var/lib/boundary"
-    recording_storage_path = "/boundary/recording"
+	name                   = "k8s-worker-${POD_NAME_LOWER}"
+	public_addr            = "worker.example.com:9202"
+	auth_storage_path      = "/var/lib/boundary"
+	recording_storage_path = "/boundary/recording"
 
-    controller_generated_activation_token = "<activation-token>"
+	controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
 
-    tags {
-        type = ["kubernetes"]
-    }
+	tags {
+		type = ["kubernetes"]
+	}
 }
 ```
 
 You can pass HCL directly with `--set-file` or template it from a values file. Because the chart evaluates `worker.config` with Helm `tpl`, Helm template expressions inside the HCL are supported.
+
+For controller-led registration, the preferred pattern is to inject the activation token from an existing Kubernetes Secret using `secretRefs` and `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`. Inline activation tokens still work for externally generated HCL such as `make worker-config`.
 
 ## Public Address And Service Exposure
 
@@ -303,10 +314,10 @@ Example values:
 
 ```yaml
 worker:
-    service:
-        proxy:
-            enabled: true
-            type: ClusterIP
+	service:
+		proxy:
+			enabled: true
+			type: ClusterIP
 ```
 
 In this model:
@@ -322,10 +333,10 @@ Example values:
 
 ```yaml
 worker:
-    service:
-        proxy:
-            enabled: true
-            type: LoadBalancer
+	service:
+		proxy:
+			enabled: true
+			type: LoadBalancer
 ```
 
 In this model:
@@ -342,9 +353,9 @@ Example HCL:
 
 ```hcl
 worker {
-    initial_upstreams = ["<upstream-host>:9201"]
-    public_addr       = "boundary-worker.example.com:9202"
-    auth_storage_path = "/var/lib/boundary"
+	initial_upstreams = ["<upstream-host>:9201"]
+	public_addr       = "boundary-worker.example.com:9202"
+	auth_storage_path = "/var/lib/boundary"
 }
 ```
 
@@ -371,9 +382,9 @@ Example:
 kubectl get svc boundary-worker-proxy -n boundary -w
 
 helm upgrade boundary-worker . \
-    --namespace boundary \
-    --reuse-values \
-    --set-file worker.config=./intermediate-worker.hcl
+	--namespace boundary \
+	--reuse-values \
+	--set-file worker.config=./intermediate-worker.hcl
 ```
 
 ### Internal load balancer or provider-managed DNS
@@ -396,11 +407,11 @@ Example overrides:
 
 ```yaml
 worker:
-    service:
-        proxy:
-            enabled: false
-        ops:
-            enabled: true
+	service:
+		proxy:
+			enabled: false
+		ops:
+			enabled: true
 ```
 
 ### Intermediate worker
@@ -437,9 +448,10 @@ For controller-led registration:
 
 1. Create the worker in Boundary or HCP Boundary.
 2. Obtain the activation token.
-3. Place the token in the HCL configuration file.
-4. Install the chart.
-5. Verify the worker registers and persists its credentials to auth storage.
+3. Create a Kubernetes Secret containing the activation token under the key configured by `secretRefs.keys.controllerGeneratedActivationToken`.
+4. Reference `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN` in `worker.config`.
+5. Install the chart.
+6. Verify the worker registers and persists its credentials to auth storage.
 
 ### KMS-backed worker authentication
 
@@ -468,6 +480,9 @@ The table below documents the primary chart values shipped in `values.yaml`.
 | `image.repository` | `hashicorp/boundary-enterprise` | Boundary worker container image repository. |
 | `image.tag` | `0.21-ent` | Image tag used by the worker container. |
 | `image.pullPolicy` | `IfNotPresent` | Kubernetes image pull policy. |
+| `secretRefs.secretName` | `boundary-worker-secrets` | Existing Kubernetes Secret containing sensitive worker values. |
+| `secretRefs.validateExisting` | `false` | When true, Helm validates the Secret exists when `worker.config` uses the chart-managed env-backed activation token. |
+| `secretRefs.keys.controllerGeneratedActivationToken` | `worker-controller-generated-activation-token` | Secret key for `BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`. |
 | `imagePullSecrets` | `[]` | Optional registry credentials for private image pulls. |
 | `worker.config` | Embedded HCL block | Raw HCL worker configuration passed through a ConfigMap. Set this directly in your values file. |
 | `worker.terminationGracePeriodSeconds` | `7200` | Pod termination grace period in seconds (2 hours). Allows active sessions to drain before pod termination. |
@@ -506,34 +521,34 @@ The table below documents the primary chart values shipped in `values.yaml`.
 
 ```yaml
 image:
-    tag: "0.21-ent"
+	tag: "0.21-ent"
 
 worker:
-    terminationGracePeriodSeconds: 7200
-    service:
-        proxy:
-            type: LoadBalancer
-            annotations:
-                service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-        ops:
-            type: ClusterIP
-    persistence:
-        authStorage:
-            size: 5Gi
-            storageClass: gp3
-        recording:
-            enabled: true
-            size: 50Gi
-            storageClass: gp3
+	terminationGracePeriodSeconds: 7200
+	service:
+		proxy:
+			type: LoadBalancer
+			annotations:
+				service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+		ops:
+			type: ClusterIP
+	persistence:
+		authStorage:
+			size: 5Gi
+			storageClass: gp3
+		recording:
+			enabled: true
+			size: 50Gi
+			storageClass: gp3
 ```
 
 Install with both an override file and the worker HCL file:
 
 ```bash
 helm install boundary-worker . \
-    --namespace boundary \
-    -f values.yaml \
-    --set-file worker.config=./worker.hcl
+	--namespace boundary \
+	-f values.yaml \
+	--set-file worker.config=./worker.hcl
 ```
 
 ## Operations
@@ -554,9 +569,9 @@ kubectl logs -n boundary deployment/boundary-worker-deployment
 
 ```bash
 helm upgrade boundary-worker . \
-    --namespace boundary \
-    --reuse-values \
-    --set-file worker.config=./worker.hcl
+	--namespace boundary \
+	--reuse-values \
+	--set-file worker.config=./worker.hcl
 ```
 
 This is also the command to use after Kubernetes assigns a proxy Service load balancer address and you need to update `public_addr` in the HCL file.
@@ -565,10 +580,10 @@ This is also the command to use after Kubernetes assigns a proxy Service load ba
 
 ```bash
 helm upgrade boundary-worker . \
-    --namespace boundary \
-    --reuse-values \
-    --set image.tag=0.21.1-ent \
-    --set-file worker.config=./worker.hcl
+	--namespace boundary \
+	--reuse-values \
+	--set image.tag=0.21.1-ent \
+	--set-file worker.config=./worker.hcl
 ```
 
 ### Roll back a release
@@ -695,20 +710,20 @@ Operational implications:
 │   ├── worker-service.yaml
 │   └── tests/
 └── tests/
-        ├── acceptance/
-        │   ├── cluster-smoke-test.sh
-        │   ├── kind-acceptance-config.yaml
-        │   ├── kind-version-matrix-test.sh
-        │   └── tcp-target-conn-test.sh
-        ├── integration/
-        │   ├── aks-integration-test.sh
-        │   └── eks-integration-test.sh
-        └── unit/
-                ├── helpers_test.yaml
-                ├── worker-configmap_test.yaml
-                ├── worker-deployment_test.yaml
-                ├── worker-pvc_test.yaml
-                └── worker-service_test.yaml
+		├── acceptance/
+		│   ├── cluster-smoke-test.sh
+		│   ├── kind-acceptance-config.yaml
+		│   ├── kind-version-matrix-test.sh
+		│   └── tcp-target-conn-test.sh
+		├── integration/
+		│   ├── aks-integration-test.sh
+		│   └── eks-integration-test.sh
+		└── unit/
+				├── helpers_test.yaml
+				├── worker-configmap_test.yaml
+				├── worker-deployment_test.yaml
+				├── worker-pvc_test.yaml
+				└── worker-service_test.yaml
 ```
 
 Key files:

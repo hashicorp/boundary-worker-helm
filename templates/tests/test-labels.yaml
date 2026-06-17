@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: "{{ include "boundary.fullname" . }}-test-labels"
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "boundary.namespace" . }}
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: test
@@ -33,7 +33,7 @@ spec:
       echo "Test: Kubernetes Labels"
       echo "=========================================="
       
-      NAMESPACE="{{ .Release.Namespace }}"
+      NAMESPACE="{{ include "boundary.namespace" . }}"
       RELEASE_NAME="{{ .Release.Name }}"
       
       echo "Checking Deployment labels..."
