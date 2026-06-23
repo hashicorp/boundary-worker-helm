@@ -1,0 +1,151 @@
+# Copyright IBM Corp. 2026
+
+suite: Test Worker OpenShift Route Configuration
+templates:
+  - worker-route.yaml
+tests:
+  # ============================================================================
+  # ROUTE NOT RENDERED ON VANILLA KUBERNETES
+  # ============================================================================
+
+  - it: should not render a Route when openshift.enabled is false
+    set:
+      openshift.enabled: false
+      openshift.route.proxy.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not render a Route when openshift.route.proxy.enabled is false
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not render a Route when both flags are false
+    set:
+      openshift.enabled: false
+      openshift.route.proxy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # ============================================================================
+  # ROUTE RENDERED ON OPENSHIFT
+  # ============================================================================
+
+  - it: should render a Route when openshift.enabled and route.proxy.enabled are true
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isAPIVersion:
+          of: route.openshift.io/v1
+      - isKind:
+          of: Route
+
+  - it: should use passthrough TLS termination by default
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.tls.termination
+          value: passthrough
+
+  - it: should allow edge TLS termination override
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      openshift.route.proxy.tls.termination: edge
+    asserts:
+      - equal:
+          path: spec.tls.termination
+          value: edge
+
+  - it: should not set spec.host when host is empty
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      openshift.route.proxy.host: ""
+    asserts:
+      - isNull:
+          path: spec.host
+
+  - it: should set spec.host when a custom host is provided
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      openshift.route.proxy.host: "boundary.apps.cluster.example.com"
+    asserts:
+      - equal:
+          path: spec.host
+          value: "boundary.apps.cluster.example.com"
+
+  - it: should target the proxy service
+    release:
+      name: my-worker
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+    asserts:
+      - equal:
+          path: spec.to.kind
+          value: Service
+      - equal:
+          path: spec.to.name
+          value: my-worker-proxy
+      - equal:
+          path: spec.port.targetPort
+          value: proxy
+
+  - it: should apply route annotations when provided
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      openshift.route.proxy.annotations:
+        haproxy.router.openshift.io/timeout: "2h"
+    asserts:
+      - equal:
+          path: metadata.annotations["haproxy.router.openshift.io/timeout"]
+          value: "2h"
+
+  - it: should use the release namespace
+    release:
+      namespace: boundary-prod
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: boundary-prod
+
+  - it: should carry standard labels
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: worker
+      - isNotNull:
+          path: metadata.labels["helm.sh/chart"]
+      - isNotNull:
+          path: metadata.labels["app.kubernetes.io/name"]
+
+  - it: should use values.namespace over release namespace when set
+    release:
+      namespace: release-ns
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      namespace: override-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: override-ns

@@ -93,6 +93,7 @@ worker:
       # - Using ClusterIP with an Ingress controller
       # - Setting scheme to "internal" in annotations
       # - Implementing network policies
+      # Note: ignored when openshift.enabled=true — the proxy port is exposed via a Route instead.
       type: LoadBalancer
       port: 9202
       targetPort: 9202
@@ -174,6 +175,39 @@ serviceAccount:
   # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/boundary-worker-role
   # iam.gke.io/gcp-service-account: boundary-worker@PROJECT.iam.gserviceaccount.com
   automountServiceAccountToken: false  # Set to true when using IRSA or Workload Identity
+
+# OpenShift configuration
+# Set openshift.enabled=true when deploying on OpenShift.
+# - Swaps the proxy Service type to ClusterIP (a Route handles external traffic instead).
+# - Drops the fixed runAsUser/runAsGroup/fsGroup so OpenShift's SCC assigns a valid UID from the namespace range.
+# - Renders an openshift.io/v1 Route for TCP-passthrough access to the proxy port.
+openshift:
+  enabled: false
+  # Pod security context used instead of podSecurityContext when openshift.enabled=true.
+  # runAsUser/runAsGroup/fsGroup are intentionally absent so the namespace SCC assigns them.
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # Container security context used instead of containerSecurityContext when openshift.enabled=true.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  route:
+    proxy:
+      enabled: true
+      # Leave empty to let OpenShift auto-assign a hostname.
+      host: ""
+      tls:
+        # passthrough keeps TLS end-to-end to the worker; use edge only if you terminate TLS at the router.
+        termination: passthrough
+      annotations: {}
 
 # Optional configurations
 podAnnotations: {}

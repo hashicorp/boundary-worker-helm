@@ -583,3 +583,68 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[3].name
           value: EXTRA_VAR
+
+  # ============================================================================
+  # OPENSHIFT SECURITY CONTEXT TESTS
+  # ============================================================================
+
+  - it: should omit runAsUser and fsGroup from pod security context when openshift.enabled is true
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: true
+    asserts:
+      - isNull:
+          path: spec.template.spec.securityContext.runAsUser
+      - isNull:
+          path: spec.template.spec.securityContext.runAsGroup
+      - isNull:
+          path: spec.template.spec.securityContext.fsGroup
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+
+  - it: should retain runAsUser and fsGroup in pod security context when openshift.enabled is false
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 100
+      - equal:
+          path: spec.template.spec.securityContext.runAsGroup
+          value: 1000
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 1000
+
+  - it: should omit runAsUser and runAsGroup from container security context when openshift.enabled is true
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: true
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+      - isNull:
+          path: spec.template.spec.containers[0].securityContext.runAsGroup
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+
+  - it: should retain runAsUser in container security context when openshift.enabled is false
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 100
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsGroup
+          value: 1000

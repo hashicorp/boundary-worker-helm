@@ -1,0 +1,301 @@
+#!/bin/bash
+# Copyright IBM Corp. 2026
+
+# OpenShift Worker Chart — TCP Target Connection Test
+# Scenarios:
+#   1. Worker running on OpenShift cluster
+#   2. Worker registers with Boundary cluster
+#   3. Session creation validated via authorize-session
+#   4. TCP connection & session field validation
+
+set -euo pipefail
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+pass() { echo "   ✅ $1"; }
+fail() { echo "❌ FAILED: $1"; exit 1; }
+info() { echo "   $1"; }
+warn() { echo "⚠️ WARN: $1"; }
+
+# ── Cleanup trap: cancel any open sessions and kill background processes ──────
+CONN_PID=""
+CONN_SESSION_ID=""
+SESSION_ID=""
+CONN_OUT=""
+_cleanup() {
+    if [ -n "${CONN_SESSION_ID}" ]; then
+        boundary sessions cancel \
+            -id "${CONN_SESSION_ID}" \
+            -addr "${BOUNDARY_ADDR:-}" \
+            -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    fi
+    if [ -n "${SESSION_ID}" ]; then
+        boundary sessions cancel \
+            -id "${SESSION_ID}" \
+            -addr "${BOUNDARY_ADDR:-}" \
+            -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    fi
+    [ -n "${CONN_PID}" ] && kill "${CONN_PID}" 2>/dev/null || true
+    [ -n "${CONN_OUT}" ] && rm -f "${CONN_OUT}" || true
+}
+trap _cleanup EXIT
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+NAMESPACE="boundary"
+DEPLOY="boundary-worker-deployment"
+# Allow callers to override the timeout.
+# Default is 300s for standalone runs.
+TIMEOUT="${TIMEOUT:-300}"
+
+# ── Load .env ─────────────────────────────────────────────────────────────────
+if [ -f .env ]; then
+    set -o allexport
+    # shellcheck disable=SC1091
+    source .env
+    set +o allexport
+fi
+
+echo "OpenShift Worker Chart — TCP Target Connection Test Suite"
+echo ""
+
+# Test 1: Worker running on OpenShift cluster
+echo "Validating Worker Running on OpenShift Cluster..."
+info "Checking OpenShift cluster accessibility..."
+oc cluster-info >/dev/null 2>&1 \
+    || fail "OpenShift cluster is not accessible. Run: oc login <cluster-url>"
+pass "OpenShift cluster accessible"
+echo ""
+
+info "Checking worker deployment..."
+oc get deployment "${DEPLOY}" -n "${NAMESPACE}" >/dev/null 2>&1 \
+    || fail "Deployment '${DEPLOY}' not found in namespace '${NAMESPACE}'. Run: make openshift-acceptance-helm"
+pass "Worker deployment '${DEPLOY}' exists"
+echo ""
+
+info "Waiting for deployment to be available (timeout: ${TIMEOUT}s...)"
+oc wait --for=condition=available \
+    --timeout="${TIMEOUT}s" \
+    deployment/"${DEPLOY}" \
+    -n "${NAMESPACE}" >/dev/null 2>&1 \
+    || fail "Worker deployment did not become available within ${TIMEOUT}s"
+pass "Worker deployment is available"
+echo ""
+
+POD=$(oc get pods \
+    -n "${NAMESPACE}" \
+    -l app.kubernetes.io/name=boundary-worker \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+[ -n "${POD}" ] || fail "No running worker pod found"
+pass "Worker pod running: ${POD}"
+echo ""
+
+# Confirm proxy Service is ClusterIP on OpenShift (Route handles external traffic)
+SVC_TYPE=$(oc get service boundary-worker-proxy -n "${NAMESPACE}" \
+    -o jsonpath='{.spec.type}' 2>/dev/null || true)
+[ "${SVC_TYPE}" = "ClusterIP" ] \
+    || fail "Proxy Service type is '${SVC_TYPE}', expected 'ClusterIP' on OpenShift"
+pass "Proxy Service type is ClusterIP"
+echo ""
+
+# Test 2: Validate Worker Registration with Boundary Cluster
+echo "Validating Worker Registration with Boundary Cluster..."
+# Check required env vars
+for var in BOUNDARY_ADDR BOUNDARY_AUTH_METHOD_ID BOUNDARY_LOGIN_NAME BOUNDARY_PASSWORD; do
+    [ -n "${!var:-}" ] || fail "'${var}' is not set. Check your .env file."
+done
+pass "Required environment variables are set"
+info "Boundary address: ${BOUNDARY_ADDR}"
+echo ""
+
+# Authenticate with Boundary
+info "Authenticating with Boundary cluster..."
+AUTH_OUT=$(boundary authenticate password \
+    -addr "${BOUNDARY_ADDR}" \
+    -auth-method-id "${BOUNDARY_AUTH_METHOD_ID}" \
+    -login-name "${BOUNDARY_LOGIN_NAME}" \
+    -password env://BOUNDARY_PASSWORD \
+    -keyring-type=none 2>&1) || fail "Boundary authentication failed:\n${AUTH_OUT}"
+
+BOUNDARY_TOKEN=$(printf '%s\n' "${AUTH_OUT}" \
+    | awk '/The token is:/ { getline; gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }')
+[ -n "${BOUNDARY_TOKEN}" ] || fail "Failed to extract auth token from authentication output"
+export BOUNDARY_TOKEN
+pass "Authenticated with Boundary cluster"
+echo ""
+
+# ── Ops health endpoint check (port-forward to ClusterIP ops service) ────────
+info "Checking worker ops health endpoint (port 9203)..."
+pkill -f "port-forward.*9203" 2>/dev/null || true
+sleep 1
+oc port-forward \
+    -n "${NAMESPACE}" \
+    "pod/${POD}" 9203:9203 >/dev/null 2>&1 &
+PF_PID=$!
+
+OPS_STATUS=""
+for ((i=1; i<=15; i++)); do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:9203/health 2>/dev/null || true)
+    if [ -n "${HTTP_CODE}" ] && [ "${HTTP_CODE}" != "000" ]; then
+        OPS_STATUS="${HTTP_CODE}"
+        break
+    fi
+    sleep 2
+done
+kill "${PF_PID}" 2>/dev/null || true
+wait "${PF_PID}" 2>/dev/null || true
+
+if [ -n "${OPS_STATUS}" ] && [ "${OPS_STATUS}" != "000" ]; then
+    info "Worker ops health endpoint responded with HTTP ${OPS_STATUS}"
+    pass "Worker ops health endpoint is reachable"
+else
+    fail "Ops health endpoint /health on port 9203 did not respond — worker is not healthy"
+fi
+echo ""
+
+# ── Auth storage: confirm node enrollment was initiated ───────────────────────
+info "Checking worker auth storage (node enrollment)..."
+AUTH_FILES=$(oc exec -n "${NAMESPACE}" "${POD}" \
+    -- find /var/lib/boundary -type f 2>/dev/null | wc -l | tr -d ' ') || AUTH_FILES=0
+
+if [ "${AUTH_FILES}" -gt 0 ]; then
+    pass "Worker auth storage populated (${AUTH_FILES} file(s)) — node enrollment initiated"
+else
+    warn "Auth storage is empty; worker may not have started enrollment yet"
+fi
+echo ""
+
+# ── Boundary API: confirm worker record exists (activation token consumed) ────
+info "Verifying worker record exists in Boundary..."
+WORKERS_JSON=$(boundary workers list \
+    -scope-id global \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN \
+    -format json 2>&1) || fail "Failed to list workers from Boundary:\n${WORKERS_JSON}"
+
+WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for w in data.get('items', []):
+    tags = w.get('canonical_tags', {}).get('type', [])
+    if 'worker' in tags and w.get('address'):
+        print(w.get('id', ''))
+        break
+" 2>/dev/null || true)
+
+[ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
+pass "Worker record exists in Boundary: ${WORKER_ID}"
+
+# Save WORKER_ID for cleanup
+echo "${WORKER_ID}" > /tmp/boundary-worker-id.txt
+echo ""
+
+# ── Log: confirm worker is reaching upstream ──────────────────────────────────
+info "Checking worker is attempting upstream connection..."
+echo ""
+if oc -n "${NAMESPACE}" logs "${POD}" 2>/dev/null \
+    | grep -q "Setting HCP Boundary cluster address\|upstream.*address\|upstreamDialerFunc"; then
+    pass "Worker is actively attempting upstream connection to Boundary cluster"
+fi
+echo ""
+
+# Test 3: Session creation
+echo "Validating Session Creation..."
+[ -n "${BOUNDARY_TARGET_ID:-}" ] \
+    || fail "'BOUNDARY_TARGET_ID' is not set. Add it to your .env file."
+pass "Target configured: ${BOUNDARY_TARGET_ID}"
+echo ""
+info "Authorizing session to target..."
+
+SESSION_OUT=$(boundary targets authorize-session \
+    -id "${BOUNDARY_TARGET_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN \
+    -format json 2>&1) || fail "authorize-session failed:\n${SESSION_OUT}"
+
+SESSION_ID=$(printf '%s\n' "${SESSION_OUT}" \
+    | grep -o '"session_id":"[^"]*"' \
+    | head -1 \
+    | cut -d'"' -f4)
+
+[ -n "${SESSION_ID}" ] || fail "Failed to extract session_id from authorize-session response"
+
+SESSION_STATUS=$(printf '%s\n' "${SESSION_OUT}" \
+    | grep -o '"status":"[^"]*"' \
+    | head -1 \
+    | cut -d'"' -f4 || true)
+[ -n "${SESSION_STATUS}" ] && info "Session status: ${SESSION_STATUS}"
+pass "Session authorized and validated"
+
+# Cancel the authorize-session token immediately — it is not used for the
+# TCP connect test below (boundary connect creates its own session).
+boundary sessions cancel \
+    -id "${SESSION_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+SESSION_ID=""   # cleared so the EXIT trap does not double-cancel
+echo ""
+
+# Test 4: TCP connection & session field validation
+echo "TCP connection & session field validation..."
+info "Establishing proxy connection..."
+echo ""
+
+CONN_OUT=$(mktemp)
+boundary connect \
+    -target-id "${BOUNDARY_TARGET_ID}" \
+    -addr "${BOUNDARY_ADDR}" \
+    -token env://BOUNDARY_TOKEN > "${CONN_OUT}" 2>&1 &
+CONN_PID=$!
+
+for i in $(seq 1 30); do
+    if grep -q "Session ID:" "${CONN_OUT}" 2>/dev/null; then break; fi
+    sleep 1
+done
+
+CONN_SESSION_ID=$(grep "Session ID:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_ADDR=$(grep "Address:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_PORT=$(grep "Port:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_PROTO=$(grep "Protocol:" "${CONN_OUT}" | awk '{print $NF}')
+CONN_PROXY_EXPIRY=$(grep "Expiration:" "${CONN_OUT}" | sed 's/.*Expiration:[[:space:]]*//')
+CONN_LIMIT=$(grep "Connection Limit:" "${CONN_OUT}" | awk '{print $NF}')
+
+echo "Session Details-"
+echo "Session ID:        ${CONN_SESSION_ID:-MISSING}"
+echo "Address:           ${CONN_PROXY_ADDR:-MISSING}"
+echo "Port:              ${CONN_PROXY_PORT:-MISSING}"
+echo "Protocol:          ${CONN_PROXY_PROTO:-MISSING}"
+echo "Expiration:        ${CONN_PROXY_EXPIRY:-MISSING}"
+echo "Connection Limit:  ${CONN_LIMIT:-MISSING}"
+echo ""
+
+CONN_PASS=1
+[ -n "${CONN_SESSION_ID}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_ADDR}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_PORT}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_PROTO}" ] || CONN_PASS=0
+[ -n "${CONN_PROXY_EXPIRY}" ] || CONN_PASS=0
+[ -n "${CONN_LIMIT}" ] || CONN_PASS=0
+
+if [ -n "${CONN_SESSION_ID}" ]; then
+    info "Waiting 15 seconds before cancelling session..."
+    sleep 15
+    info "Cancelling session ${CONN_SESSION_ID}..."
+    boundary sessions cancel \
+        -id "${CONN_SESSION_ID}" \
+        -addr "${BOUNDARY_ADDR}" \
+        -token env://BOUNDARY_TOKEN >/dev/null 2>&1 || true
+    CONN_SESSION_ID=""   # cleared so the EXIT trap does not double-cancel
+    pass "Session cancelled Successfully"
+    echo ""
+fi
+kill "${CONN_PID}" 2>/dev/null || true
+wait "${CONN_PID}" 2>/dev/null || true
+CONN_PID=""
+rm -f "${CONN_OUT}"
+CONN_OUT=""
+
+[ "${CONN_PASS}" -eq 1 ] || fail "One or more session fields were missing"
+echo ""
+
+echo "✅ OpenShift Worker Chart TCP Target Connection Test passed!"

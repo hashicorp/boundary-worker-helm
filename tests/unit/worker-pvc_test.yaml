@@ -204,3 +204,45 @@ tests:
           path: spec.storageClassName
           value: local-path
         documentIndex: 0
+
+  # ============================================================================
+  # STORAGECLASS CONDITIONAL RENDERING TESTS (OpenShift / default SC)
+  # ============================================================================
+
+  - it: should omit storageClassName from recording PVC when storageClass is empty
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.recording.storageClass: ""
+    documentIndex: 0
+    asserts:
+      - isNull:
+          path: spec.storageClassName
+
+  - it: should set storageClassName on recording PVC when storageClass is provided
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.recording.storageClass: gp3-csi
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.storageClassName
+          value: gp3-csi
+
+  - it: should omit storageClassName from auth PVC when storageClass is empty
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.storageClass: ""
+    documentIndex: 0
+    asserts:
+      - isNull:
+          path: spec.storageClassName
+
+  - it: should set storageClassName on auth PVC when storageClass is provided
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.storageClass: thin-csi
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.storageClassName
+          value: thin-csi

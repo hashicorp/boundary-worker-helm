@@ -181,3 +181,41 @@ tests:
           path: metadata.namespace
           value: custom-namespace
         documentIndex: 1
+
+  # ============================================================================
+  # OPENSHIFT SERVICE TESTS
+  # ============================================================================
+
+  - it: should use ClusterIP for proxy service when openshift.enabled is true
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.proxy.type: LoadBalancer
+      openshift.enabled: true
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: should use configured type for proxy service when openshift.enabled is false
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.proxy.type: LoadBalancer
+      openshift.enabled: false
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.type
+          value: LoadBalancer
+
+  - it: should keep ops service type unchanged when openshift.enabled is true
+    set:
+      worker.service.proxy.enabled: true
+      worker.service.ops.enabled: true
+      worker.service.ops.type: ClusterIP
+      openshift.enabled: true
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP

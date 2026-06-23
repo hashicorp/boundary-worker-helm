@@ -14,7 +14,9 @@ metadata:
 spec:
   accessModes:
     - {{ .Values.worker.persistence.recording.accessMode }}
+  {{- if .Values.worker.persistence.recording.storageClass }}
   storageClassName: {{ .Values.worker.persistence.recording.storageClass }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.worker.persistence.recording.size }}
@@ -37,7 +39,9 @@ metadata:
 spec:
   accessModes:
     - {{ .Values.worker.persistence.authStorage.accessMode }}
+  {{- if .Values.worker.persistence.authStorage.storageClass }}
   storageClassName: {{ .Values.worker.persistence.authStorage.storageClass }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.worker.persistence.authStorage.size }}

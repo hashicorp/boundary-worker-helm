@@ -12,8 +12,10 @@ endif
 # ================================
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
-.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup acceptance-all
 .PHONY: kind-matrix-test kind-matrix-cleanup
+.PHONY: openshift-smoke-test openshift-helm openshift-acceptance-test openshift-acceptance-full openshift-acceptance-cleanup
+.PHONY: crc-setup crc-helm crc-test crc-full crc-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
@@ -53,8 +55,23 @@ help:
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
+	@echo "  make acceptance-all        - Run BOTH Kubernetes (KIND) and OpenShift (CRC) acceptance tests"
 	@echo "  make kind-matrix-test      - Run tcp-target-conn-test.sh across the 2 KIND versions prior to latest (auto-resolved)"
 	@echo "  make kind-matrix-cleanup   - Delete the acceptance cluster and cached KIND binaries"
+	@echo ""
+	@echo "OpenShift Acceptance Testing targets:"
+	@echo "  make openshift-smoke-test        - Run OpenShift cluster + chart smoke test (standalone: installs+verifies+cleans up)"
+	@echo "  make openshift-helm              - Install Helm chart on an OpenShift cluster (values.openshift.yaml)"
+	@echo "  make openshift-acceptance-test   - Run full OpenShift acceptance test suite (chart must already be deployed)"
+	@echo "  make openshift-acceptance-full   - Full OpenShift workflow (worker-config + openshift-helm + tests)"
+	@echo "  make openshift-acceptance-cleanup - Uninstall Helm release from OpenShift"
+	@echo ""
+	@echo "OpenShift Local (CRC) Acceptance Testing targets:"
+	@echo "  make crc-setup     - Start CRC cluster and configure oc context"
+	@echo "  make crc-helm      - Install Helm chart on CRC with values.openshift.yaml"
+	@echo "  make crc-test      - Run full OpenShift acceptance suite against CRC"
+	@echo "  make crc-full      - Full CRC workflow (crc-setup + worker-config + crc-helm + crc-test)"
+	@echo "  make crc-cleanup   - Uninstall Helm release and stop CRC cluster"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
@@ -543,6 +560,202 @@ acceptance-test:
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
 
+# ================================
+# OpenShift Acceptance Testing Targets
+# ================================
+
+openshift-smoke-test:
+	@echo "================================"
+	@echo "OpenShift Worker Chart Smoke Test"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: oc login <cluster-url>"; exit 1)
+	@if [ ! -f worker.hcl ]; then \
+		echo "❌ worker.hcl not found. Run 'make worker-config' first"; \
+		exit 1; \
+	fi
+	@bash tests/acceptance/openshift-smoke-test.sh
+
+openshift-helm:
+	@echo "============================================"
+	@echo "Installing Helm Chart on OpenShift"
+	@echo "============================================"
+	@echo ""
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@echo "Installing boundary-worker chart with values.openshift.yaml..."
+	@EXTRA_ARGS=""; \
+	if [ -n "$${OCP_STORAGE_CLASS:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.persistence.recording.storageClass=$${OCP_STORAGE_CLASS} --set worker.persistence.authStorage.storageClass=$${OCP_STORAGE_CLASS}"; \
+	fi; \
+	if [ -n "$${OCP_MEM_REQUEST:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.requests.memory=$${OCP_MEM_REQUEST}"; \
+	fi; \
+	if [ -n "$${OCP_CPU_REQUEST:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.requests.cpu=$${OCP_CPU_REQUEST}"; \
+	fi; \
+	if [ -n "$${OCP_MEM_LIMIT:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.limits.memory=$${OCP_MEM_LIMIT}"; \
+	fi; \
+	if [ -n "$${OCP_CPU_LIMIT:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.limits.cpu=$${OCP_CPU_LIMIT}"; \
+	fi; \
+	helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		-f values.openshift.yaml \
+		--set-file worker.config=worker.hcl \
+		--wait \
+		--timeout 5m \
+		$$EXTRA_ARGS
+	@echo "✅ Helm chart installed on OpenShift"
+	@echo ""
+	@oc get all -n boundary
+
+openshift-acceptance-test:
+	@echo "================================"
+	@echo "OpenShift Acceptance Test Suite"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: oc login <cluster-url>"; exit 1)
+	@SKIP_HELM_INSTALL=true bash tests/acceptance/openshift-smoke-test.sh
+	@bash tests/acceptance/openshift-tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
+	@echo "✅ All OpenShift acceptance tests passed!"
+	@echo ""
+
+openshift-acceptance-full:
+	@echo "================================"
+	@echo "Running Full OpenShift Acceptance Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) worker-config
+	@$(MAKE) openshift-helm
+	@$(MAKE) openshift-acceptance-test
+	@echo ""
+	@echo "To cleanup, run: make openshift-acceptance-cleanup"
+	@echo ""
+
+openshift-acceptance-cleanup:
+	@echo "================================"
+	@echo "Cleaning up OpenShift Acceptance"
+	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
+	@echo "Uninstalling Helm release..."
+	@helm uninstall boundary-worker --namespace boundary 2>/dev/null && echo "✅ Helm release uninstalled" || echo "⚠️  Helm release not found"
+	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo "✅ OpenShift acceptance cleanup complete"
+
+# ================================
+# OpenShift Local (CRC) Targets
+# ================================
+
+crc-setup:
+	@echo "================================"
+	@echo "Setting up CRC (OpenShift Local)"
+	@echo "================================"
+	@echo ""
+	@command -v crc >/dev/null 2>&1 || (echo "❌ crc not installed. Download from: https://developers.redhat.com/products/openshift-local"; exit 1)
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: eval $$(crc oc-env)"; exit 1)
+	@echo "✅ crc and oc are installed"
+	@echo ""
+	@echo "Starting CRC cluster (this may take several minutes)..."
+	@crc start
+	@echo ""
+	@echo "Configuring oc context..."
+	@eval $$(crc oc-env) && \
+		KUBEADMIN_PASS=$$(crc console --credentials 2>/dev/null | grep 'kubeadmin' | sed 's/.*-p \([^ ]*\) .*/\1/') && \
+		oc login -u kubeadmin -p "$$KUBEADMIN_PASS" \
+			--insecure-skip-tls-verify=true \
+			https://api.crc.testing:6443
+	@oc cluster-info
+	@echo "✅ CRC cluster is ready"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - Generate worker config: make worker-config"
+	@echo "  - Install Helm chart:     make crc-helm"
+	@echo "  - Run tests:              make crc-test"
+	@echo "  - Full workflow:          make crc-full"
+
+crc-helm:
+	@echo "============================================"
+	@echo "Installing Helm Chart on CRC"
+	@echo "============================================"
+	@echo ""
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
+	@if [ ! -f worker.hcl ]; then \
+		echo "❌ worker.hcl not found. Run 'make worker-config' first"; \
+		exit 1; \
+	fi
+	@echo "Installing boundary-worker chart with values.openshift.yaml..."
+	@helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		-f values.openshift.yaml \
+		--set worker.persistence.recording.storageClass=crc-csi-hostpath-provisioner \
+		--set worker.persistence.authStorage.storageClass=crc-csi-hostpath-provisioner \
+		--set worker.resources.requests.memory=128Mi \
+		--set worker.resources.requests.cpu=50m \
+		--set worker.resources.limits.memory=512Mi \
+		--set worker.resources.limits.cpu=200m \
+		--set-file worker.config=worker.hcl \
+		--wait \
+		--timeout 5m
+	@echo "✅ Helm chart installed successfully"
+	@echo ""
+	@echo "Deployed resources:"
+	@oc get all -n boundary
+	@echo ""
+	@echo "Waiting for deployment to be ready..."
+	@oc wait --for=condition=available --timeout=5m \
+		deployment/boundary-worker-deployment \
+		-n boundary
+	@echo "✅ Deployment is ready"
+
+crc-test:
+	@echo "================================"
+	@echo "CRC OpenShift Acceptance Tests"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: eval $$(crc oc-env)"; exit 1)
+	@SKIP_HELM_INSTALL=true bash tests/acceptance/openshift-smoke-test.sh
+	@bash tests/acceptance/openshift-tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
+	@echo "✅ All CRC acceptance tests passed!"
+	@echo ""
+
+crc-full:
+	@echo "================================"
+	@echo "Running Full CRC Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) crc-setup
+	@$(MAKE) worker-config
+	@$(MAKE) crc-helm
+	@$(MAKE) crc-test
+	@echo ""
+	@echo "To cleanup, run: make crc-cleanup"
+	@echo ""
+
+crc-cleanup:
+	@echo "================================"
+	@echo "Cleaning up CRC"
+	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
+	@echo "Uninstalling Helm release..."
+	@helm uninstall boundary-worker --namespace boundary 2>/dev/null && echo "✅ Helm release uninstalled" || echo "⚠️  Helm release not found"
+	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo ""
+	@echo "Stopping CRC cluster..."
+	@crc stop && echo "✅ CRC cluster stopped" || echo "⚠️  CRC stop failed"
+	@echo "✅ CRC cleanup complete"
+
 
 acceptance-full:
 	@echo "================================"
@@ -559,6 +772,20 @@ acceptance-full:
 	@$(MAKE) acceptance-test
 	@echo ""
 	@echo "To cleanup, run: make acceptance-cleanup"
+	@echo ""
+
+acceptance-all:
+	@echo "=================================================="
+	@echo "Running Full Acceptance Suite (Kubernetes + OpenShift)"
+	@echo "=================================================="
+	@echo ""
+	@echo "--- Phase 1: Kubernetes (KIND) Acceptance Tests ---"
+	@$(MAKE) acceptance-full
+	@echo ""
+	@echo "--- Phase 2: OpenShift (CRC) Acceptance Tests ---"
+	@$(MAKE) crc-full
+	@echo ""
+	@echo "✅ All acceptance tests passed (Kubernetes + OpenShift)!"
 	@echo ""
 
 # ================================
