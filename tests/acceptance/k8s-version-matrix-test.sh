@@ -67,7 +67,7 @@ read -ra MATRIX_K8S_VERSIONS <<< "$(k8s_versions)"
 KIND_CLUSTER_NAME="acceptance"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-KIND_CONFIG="${SCRIPT_DIR}/kind-acceptance-config.yaml"
+KIND_MATRIX_TEMPLATE="${SCRIPT_DIR}/k8s-matrix-config.yaml.tpl"
 TCP_TEST="${SCRIPT_DIR}/tcp-target-conn-test.sh"
 
 # Print the resolved versions and exit (used by tooling / CI to build a matrix).
@@ -93,7 +93,7 @@ fi
 
 # -- Pre-flight checks ----------------------------------------------------------
 header "Pre-flight Checks"
-for cmd in kubectl helm boundary curl docker kind; do
+for cmd in kubectl helm boundary curl docker kind python3; do
     command -v "${cmd}" >/dev/null 2>&1 \
         || fail "'${cmd}' is required but not installed. Run: make acceptance-setup"
     pass "${cmd} found"
@@ -104,7 +104,7 @@ docker info >/dev/null 2>&1 \
     || fail "Docker daemon is not running. Start Docker Desktop and retry."
 pass "Docker daemon is running"
 
-[ -f "${KIND_CONFIG}" ]  || fail "Kind config not found: ${KIND_CONFIG}"
+[ -f "${KIND_MATRIX_TEMPLATE}" ] || fail "Kind matrix template not found: ${KIND_MATRIX_TEMPLATE}"
 [ -f "${TCP_TEST}" ]     || fail "TCP test not found: ${TCP_TEST}"
 pass "Test scripts present"
 
@@ -195,32 +195,16 @@ cleanup_cluster() {
 }
 
 # -- create_kind_config_for_k8s: pin every node to kindest/node:<version> ------
-# Preserves the worker's NodePort extraPortMappings from kind-acceptance-config.yaml
-# while injecting the requested Kubernetes node image on each node so the matrix
-# can exercise the chart across multiple Kubernetes API-server versions.
+# Renders k8s-matrix-config.yaml.tpl, substituting the __K8S_VERSION__
+# placeholder with the requested tag. The node layout and NodePort mappings live
+# in that template file so they can be maintained without editing this script.
 create_kind_config_for_k8s() {
     local k8s_version="$1"
+    [ -f "${KIND_MATRIX_TEMPLATE}" ] || fail "Kind matrix template not found: ${KIND_MATRIX_TEMPLATE}"
     local cfg
     cfg="$(mktemp)" || fail "Failed to create temp kind config"
-    cat >"${cfg}" <<EOF
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-name: ${KIND_CLUSTER_NAME}
-nodes:
-- role: control-plane
-  image: kindest/node:${k8s_version}
-  extraPortMappings:
-  - containerPort: 30000
-    hostPort: 30000
-    protocol: TCP
-  - containerPort: 30001
-    hostPort: 30001
-    protocol: TCP
-- role: worker
-  image: kindest/node:${k8s_version}
-- role: worker
-  image: kindest/node:${k8s_version}
-EOF
+    sed "s|__K8S_VERSION__|${k8s_version}|g" "${KIND_MATRIX_TEMPLATE}" > "${cfg}" \
+        || fail "Failed to render kind config for ${k8s_version}"
     echo "${cfg}"
 }
 

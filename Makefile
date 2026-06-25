@@ -7,13 +7,17 @@ ifneq (,$(wildcard .env))
   export
 endif
 
+# Always export the Kubernetes version matrix selection to recipe sub-shells,
+# even when no .env file is present (e.g. `make k8s-matrix-test K8S_MATRIX_VERSIONS=...`).
+export K8S_MATRIX_VERSIONS
+
 # ================================
 # PHONY Declarations
 # ================================
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
 .PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
-.PHONY: kind-matrix-test kind-matrix-cleanup
+.PHONY: k8s-matrix-test k8s-matrix-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
@@ -53,8 +57,8 @@ help:
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
-	@echo "  make kind-matrix-test      - Run tcp-target-conn-test.sh across kindest/node K8s versions (set K8S_MATRIX_VERSIONS or K8S_VERSIONS)"
-	@echo "  make kind-matrix-cleanup   - Delete the acceptance cluster and generated worker config"
+	@echo "  make k8s-matrix-test       - Run tcp-target-conn-test.sh across kindest/node K8s versions (set K8S_MATRIX_VERSIONS or K8S_VERSIONS)"
+	@echo "  make k8s-matrix-cleanup    - Delete the acceptance cluster and generated worker config"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
@@ -540,11 +544,14 @@ acceptance-test:
 	@bash tests/acceptance/cluster-smoke-test.sh
 	@bash tests/acceptance/tcp-target-conn-test.sh
 	@bash tests/acceptance/cleanup-worker.sh
-	@bash tests/acceptance/kind-version-matrix-test.sh
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
 
 
+# Note: acceptance-full does NOT run the Kubernetes version matrix test.
+# The matrix manages its own cluster lifecycle (it deletes/recreates the
+# 'acceptance' cluster per version), so it is kept separate. Run it on its own:
+#   make k8s-matrix-test K8S_MATRIX_VERSIONS="v1.36.1 v1.35.5"
 acceptance-full:
 	@echo "================================"
 	@echo "Running Full Acceptance Workflow"
@@ -563,25 +570,25 @@ acceptance-full:
 	@echo ""
 
 # ================================
-# KIND Version Matrix Testing
+# Kubernetes Version Matrix Testing
 # ================================
 
-kind-matrix-test:
+k8s-matrix-test:
 	@echo "================================"
 	@echo "Kubernetes Version Matrix Test"
 	@echo "================================"
 	@if [ -z "$(K8S_MATRIX_VERSIONS)" ] && [ -z "$(K8S_VERSIONS)" ]; then \
 		echo "❌ Set K8S_MATRIX_VERSIONS (ordered kindest/node tags) or K8S_VERSIONS (one-off override)."; \
-		echo "   Example: make kind-matrix-test K8S_MATRIX_VERSIONS=\"v1.31.0 v1.30.0\""; \
+		echo "   Example: make k8s-matrix-test K8S_MATRIX_VERSIONS=\"v1.31.0 v1.30.0\""; \
 		echo "   Available tags: https://hub.docker.com/r/kindest/node"; \
 		exit 1; \
 	fi
-	@chmod +x tests/acceptance/kind-version-matrix-test.sh
-	@K8S_MATRIX_VERSIONS="$(K8S_MATRIX_VERSIONS)" K8S_VERSIONS="$(K8S_VERSIONS)" bash tests/acceptance/kind-version-matrix-test.sh
+	@chmod +x tests/acceptance/k8s-version-matrix-test.sh
+	@K8S_MATRIX_VERSIONS="$(K8S_MATRIX_VERSIONS)" K8S_VERSIONS="$(K8S_VERSIONS)" bash tests/acceptance/k8s-version-matrix-test.sh
 
-kind-matrix-cleanup:
+k8s-matrix-cleanup:
 	@echo "================================"
-	@echo "KIND Matrix Cleanup"
+	@echo "K8s Matrix Cleanup"
 	@echo "================================"
 	@if kind get clusters 2>/dev/null | grep -q "^acceptance$$"; then \
 		echo "Deleting acceptance cluster..."; \
@@ -591,7 +598,7 @@ kind-matrix-cleanup:
 	fi
 	@rm -f worker.hcl
 	@rm -f /tmp/boundary-worker-id.txt
-	@echo "✅ KIND matrix cleanup complete"
+	@echo "✅ K8s matrix cleanup complete"
 
 acceptance-cleanup:
 	@echo "================================"

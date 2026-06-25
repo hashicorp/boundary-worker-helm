@@ -43,7 +43,7 @@ trap _cleanup EXIT
 CONTEXT="kind-acceptance"
 NAMESPACE="boundary"
 DEPLOY="boundary-worker-deployment"
-# Allow callers (e.g. kind-version-matrix-test.sh) to override the timeout.
+# Allow callers (e.g. k8s-version-matrix-test.sh) to override the timeout.
 # Default is 300s for standalone runs; the matrix test exports TIMEOUT=600.
 TIMEOUT="${TIMEOUT:-300}"
 

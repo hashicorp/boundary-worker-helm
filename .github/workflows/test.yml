@@ -175,7 +175,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # One isolated runner per Kubernetes version. fail-fast: false so a failure in
-  # one version does not cancel the others. make kind-matrix-test (driven by
+  # one version does not cancel the others. make k8s-matrix-test (driven by
   # K8S_VERSIONS) creates a cluster pinned to kindest/node:<version>, generates
   # worker.hcl, installs the chart, runs the session test, then tears down
   # (including ID-scoped Boundary worker cleanup).
@@ -211,7 +211,7 @@ jobs:
         run: make acceptance-setup
 
       - name: Run Kubernetes acceptance test for selected version
-        run: make kind-matrix-test
+        run: make k8s-matrix-test
 
       - name: Cleanup
         if: always()
