@@ -736,8 +736,9 @@ Operational implications:
 └── tests/
 		├── acceptance/
 		│   ├── cluster-smoke-test.sh
+		│   ├── k8s-matrix-config.yaml.tpl
+		│   ├── k8s-version-matrix-test.sh
 		│   ├── kind-acceptance-config.yaml
-		│   ├── kind-version-matrix-test.sh
 		│   └── tcp-target-conn-test.sh
 		├── integration/
 		│   ├── aks-integration-test.sh
@@ -762,7 +763,8 @@ Key files:
 - `tests/unit/*_test.yaml`: Helm unit tests run with `helm-unittest`
 - `tests/acceptance/cluster-smoke-test.sh`: validates a KIND cluster is up and accessible
 - `tests/acceptance/tcp-target-conn-test.sh`: end-to-end session and TCP connection test
-- `tests/acceptance/kind-version-matrix-test.sh`: runs `tcp-target-conn-test.sh` across multiple KIND versions
+- `tests/acceptance/k8s-version-matrix-test.sh`: runs `tcp-target-conn-test.sh` across multiple Kubernetes versions
+- `tests/acceptance/k8s-matrix-config.yaml.tpl`: KIND cluster template rendered per Kubernetes version by the matrix test
 - `tests/integration/`: EKS and AKS integration tests
 - `docs/TESTING.md`: full testing guide
 - `docs/FAQ.md`: frequently asked questions
