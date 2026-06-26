@@ -43,7 +43,7 @@ trap _cleanup EXIT
 CONTEXT="kind-acceptance"
 NAMESPACE="boundary"
 DEPLOY="boundary-worker-deployment"
-# Allow callers (e.g. kind-version-matrix-test.sh) to override the timeout.
+# Allow callers (e.g. k8s-version-matrix-test.sh) to override the timeout.
 # Default is 300s for standalone runs; the matrix test exports TIMEOUT=600.
 TIMEOUT="${TIMEOUT:-300}"
 
@@ -163,28 +163,56 @@ fi
 echo ""
 
 # ── Boundary API: confirm worker record exists (activation token consumed) ────
-info "Verifying worker record exists in Boundary..."
-WORKERS_JSON=$(boundary workers list \
-    -scope-id global \
-    -addr "${BOUNDARY_ADDR}" \
-    -token env://BOUNDARY_TOKEN \
-    -format json 2>&1) || fail "Failed to list workers from Boundary:\n${WORKERS_JSON}"
+# Prefer the exact worker ID recorded by `make worker-config` (ID-scoped) so
+# that concurrent runs sharing one Boundary cluster never pick up each other's
+# worker. Fall back to a tag-based lookup when the ID file is absent.
+WORKER_ID_FILE="${BOUNDARY_WORKER_ID_FILE:-/tmp/boundary-worker-id.txt}"
+EXPECTED_WORKER_ID=""
+[ -f "${WORKER_ID_FILE}" ] && EXPECTED_WORKER_ID="$(tr -d '[:space:]' < "${WORKER_ID_FILE}" 2>/dev/null || true)"
+[ -n "${EXPECTED_WORKER_ID}" ] && info "Expecting worker ID: ${EXPECTED_WORKER_ID}"
 
-WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
-import json, sys
+info "Verifying worker record exists in Boundary..."
+WORKER_ID=""
+for ((attempt=1; attempt<=20; attempt++)); do
+    WORKERS_JSON=$(boundary workers list \
+        -scope-id global \
+        -addr "${BOUNDARY_ADDR}" \
+        -token env://BOUNDARY_TOKEN \
+        -format json 2>&1) || fail "Failed to list workers from Boundary:\n${WORKERS_JSON}"
+
+    WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" \
+        | EXPECTED_WORKER_ID="${EXPECTED_WORKER_ID}" python3 -c "
+import json, os, sys
+expected = os.environ.get('EXPECTED_WORKER_ID', '').strip()
 data = json.load(sys.stdin)
-for w in data.get('items', []):
+items = data.get('items', [])
+# 1. ID-scoped match: the exact worker created for THIS run, once connected.
+if expected:
+    for w in items:
+        if w.get('id') == expected and w.get('address'):
+            print(w.get('id', '')); sys.exit(0)
+    sys.exit(0)
+# 2. Fallback: first connected worker carrying the 'worker' tag.
+for w in items:
     tags = w.get('canonical_tags', {}).get('type', [])
     if 'worker' in tags and w.get('address'):
-        print(w.get('id', ''))
-        break
+        print(w.get('id', '')); break
 " 2>/dev/null || true)
 
-[ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
+    [ -n "${WORKER_ID}" ] && break
+    sleep 3
+done
+
+if [ -z "${WORKER_ID}" ]; then
+    if [ -n "${EXPECTED_WORKER_ID}" ]; then
+        fail "Worker ${EXPECTED_WORKER_ID} did not connect to Boundary in time. Activation token may not have been consumed."
+    fi
+    fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
+fi
 pass "Worker record exists in Boundary: ${WORKER_ID}"
 
-# Save WORKER_ID for cleanup
-echo "${WORKER_ID}" > /tmp/boundary-worker-id.txt
+# Persist the confirmed worker ID for ID-scoped cleanup.
+echo "${WORKER_ID}" > "${WORKER_ID_FILE}"
 echo ""
 
 # ── Log: confirm worker is reaching upstream ──────────────────────────────────

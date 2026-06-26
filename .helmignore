@@ -17,7 +17,7 @@
 Makefile
 kubescape-exceptions.json
 scripts/
-tests/
+/tests/
 worker.hcl
 .env
 .terraform/

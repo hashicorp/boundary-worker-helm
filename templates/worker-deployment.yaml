@@ -47,6 +47,16 @@ spec:
                   fieldPath: metadata.name
             - name: SKIP_SETCAP
               value: "1"
+            {{- if and (eq (include "boundary.worker.usesEnvActivationToken" .) "true") .Values.secretRefs.secretName }}
+            - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "boundary.worker.secretName" . }}
+                  key: {{ .Values.secretRefs.keys.controllerGeneratedActivationToken }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           command:
             - /bin/sh
             - -c

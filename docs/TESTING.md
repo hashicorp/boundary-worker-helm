@@ -19,6 +19,8 @@ All tests share these base requirements:
 - `kubectl` CLI installed
 - `helm` CLI installed
 - `boundary` CLI installed
+- `curl` installed
+- `python3` installed (used to parse Boundary JSON output in the acceptance tests)
 - KIND for local cluster testing (`brew install kind`)
 
 Install all local dependencies at once:
@@ -107,6 +109,10 @@ BOUNDARY_CLUSTER_ID="<your-hcp-boundary-cluster-id>"
 
 # Required for TCP target connection test
 BOUNDARY_TARGET_ID="ttcp_<your-target-id>"
+
+# Optional: default Kubernetes version matrix (space or comma separated kindest/node tags).
+# Auto-loaded and exported by the Makefile; override per-run with K8S_VERSIONS.
+# K8S_MATRIX_VERSIONS="v1.36.1 v1.35.5 v1.34.8"
 ```
 
 #### 2. Generate a worker HCL configuration
@@ -115,7 +121,7 @@ BOUNDARY_TARGET_ID="ttcp_<your-target-id>"
 make worker-config
 ```
 
-This authenticates with Boundary, creates a new worker resource, and writes a ready-to-use `worker.hcl` to the chart root. The activation token is embedded automatically.
+This authenticates with Boundary, creates a new worker resource, and writes a ready-to-use `worker.hcl` to the chart root. That workflow still embeds the activation token directly for local and CI automation. The chart also supports the controller-chart-style Secret flow, where `worker.config` references `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN` and the token comes from `secretRefs`.
 
 #### 3. Install dependencies
 
@@ -172,38 +178,69 @@ bash tests/acceptance/tcp-target-conn-test.sh
 
 ---
 
-### KIND Version Matrix Test
+### Kubernetes Version Matrix Test
 
-Runs `tcp-target-conn-test.sh` across multiple KIND versions for Kubernetes compatibility validation.
-
-```bash
-cd boundary-worker-helm
-bash tests/acceptance/kind-version-matrix-test.sh
-```
-
-Or via `make`:
+Runs `tcp-target-conn-test.sh` across multiple Kubernetes versions to validate the chart against different Kubernetes API-server versions. Each version uses a KIND cluster pinned to the matching `kindest/node` image.
 
 ```bash
-make kind-matrix-test
+make k8s-matrix-test K8S_MATRIX_VERSIONS="v1.36.1 v1.35.5 v1.34.8"
 ```
+
+Test a single version (faster iteration):
+
+```bash
+make k8s-matrix-test K8S_VERSIONS="v1.36.1"
+```
+
+**Version source:**
+- `K8S_MATRIX_VERSIONS` — the configured list of `kindest/node` tags (space or comma separated).
+- `K8S_VERSIONS` — a one-off override that takes precedence over `K8S_MATRIX_VERSIONS`.
+
+The run fails fast if neither is set. Available tags: https://hub.docker.com/r/kindest/node
 
 **What it tests:**
-- Full TCP target connection test across the two most recent stable KIND releases
-- Automatically resolves latest KIND releases from the GitHub Releases API
-- Falls back to hardcoded versions when offline (`v0.30.0`, `v0.29.0`)
+- The full TCP target connection test on every configured Kubernetes version
+- Independent pass/fail per version (one version failing does not stop the others)
 
-**Duration:** ~15–20 minutes (runs the full test suite twice)
-
-**Process:**
-1. Resolves two prior stable KIND versions (latest-1 and latest-2)
-2. Downloads pinned KIND binaries (cached in `/tmp`)
-3. Creates a fresh KIND cluster for each version using `kind-acceptance-config.yaml`
+**Process (per version):**
+1. Deletes any leftover `acceptance` cluster
+2. Creates a fresh cluster pinned to `kindest/node:<version>`, rendered from `tests/acceptance/k8s-matrix-config.yaml.tpl`
+3. Pre-loads the worker image into the node (arch-aware)
 4. Generates a new `worker.hcl` via `make worker-config`
-5. Installs the Helm chart via `make acceptance-helm`
+5. Installs the Helm chart
 6. Runs `tcp-target-conn-test.sh` with `TIMEOUT=600`
-7. Tears down the cluster
-8. Repeats for the next version
-9. Prints a per-version pass/fail summary
+7. Tears down the cluster and removes the worker registration from Boundary
+8. Prints a per-version pass/fail summary at the end
+
+**Requirements:**
+- KIND **v0.32.0+** locally — current node images (e.g. `v1.36.1`) require it; older KIND cannot load them and the worker pod will `ImagePullBackOff`. The `kindest/node` tags must match your installed KIND version (see each KIND release's notes).
+- Same `.env` and target requirements as the TCP target connection test.
+
+**Duration:** ~5–10 minutes per version (run serially on one machine).
+
+**Configuring the matrix in CI:**
+
+In GitHub Actions the version list comes from a **repository variable** named `K8S_MATRIX_VERSIONS` (not a secret). The `acceptance-matrix` job hard-fails if it is unset, so you must create it before the workflow can run:
+
+1. Go to **Settings → Secrets and variables → Actions → Variables → New repository variable**.
+2. Name: `K8S_MATRIX_VERSIONS`
+3. Value: a space- or comma-separated list of `kindest/node` image tags, e.g. `v1.36.1 v1.35.5 v1.34.8`.
+
+Format and tag rules:
+- Each entry is a `kindest/node` tag including the leading `v` (e.g. `v1.36.1`), **not** a bare `1.36`.
+- Tags must be published for the KIND version CI installs (CI uses the latest KIND, so use the latest release's tags). Browse valid tags at https://hub.docker.com/r/kindest/node or the KIND release notes.
+- For a one-off run you can override the variable with the `workflow_dispatch` **`k8s_versions`** input — it takes precedence over the repository variable for that run only.
+
+The same `BOUNDARY_*` secrets the TCP target connection test needs must also be configured as Actions secrets, otherwise the per-version jobs fail at worker registration.
+
+> In CI, these versions run **in parallel** — one job per version — via the `acceptance-matrix` and `acceptance-test` jobs in `.github/workflows/test.yml`, driven by the `K8S_MATRIX_VERSIONS` repository variable (or the `workflow_dispatch` `k8s_versions` input).
+
+Preview the resolved version list without creating any clusters:
+
+```bash
+PRINT_RESOLVED_K8S_VERSIONS=true K8S_MATRIX_VERSIONS="v1.36.1 v1.35.5" \
+  bash tests/acceptance/k8s-version-matrix-test.sh
+```
 
 ---
 
@@ -227,17 +264,16 @@ make acceptance-cleanup
 
 This performs the following cleanup actions:
 1. Deletes the worker registration from the Boundary cluster (prevents worker buildup)
-2. Deletes the `acceptance` KIND cluster
-3. Uninstalls the Helm release
-4. Preserves cached KIND binaries in `/tmp` for faster subsequent test runs
+2. Deletes the `acceptance` KIND cluster (removing the Helm release with it)
+3. Removes the generated `worker.hcl` and the worker-ID file (`/tmp/boundary-worker-id.txt`)
 
-To also remove cached KIND binaries (used by the matrix test):
+To clean up after a matrix run:
 
 ```bash
-make kind-matrix-cleanup
+make k8s-matrix-cleanup
 ```
 
-This removes all downloaded KIND version binaries from `/tmp/kind-v*`. Use this when you want a completely clean state or to free up disk space.
+This deletes the `acceptance` KIND cluster and removes the generated `worker.hcl` and worker-ID file (`/tmp/boundary-worker-id.txt`).
 
 ---
 
@@ -408,6 +444,8 @@ The acceptance cluster is defined in `tests/acceptance/kind-acceptance-config.ya
 - 1 control-plane node, 2 worker nodes
 - Port 30000 and 30001 mapped from container to host for NodePort services
 
+The Kubernetes version matrix test uses a separate template, `tests/acceptance/k8s-matrix-config.yaml.tpl`, with the same topology but a `__K8S_VERSION__` placeholder that the script substitutes with each `kindest/node` tag. Edit node roles / port mappings there to change the matrix cluster layout.
+
 ### Timeout configuration
 
 The `tcp-target-conn-test.sh` script defaults to a 300-second deployment wait timeout. The matrix test overrides this to 600 seconds. You can override it manually:
@@ -481,8 +519,8 @@ curl http://localhost:9203/health
 # Delete the KIND cluster
 kind delete cluster --name acceptance
 
-# Clean up cached KIND binaries (optional)
-rm -f /tmp/kind-v*
+# Remove generated worker artifacts (optional)
+rm -f worker.hcl /tmp/boundary-worker-id.txt
 ```
 
 ---
@@ -492,6 +530,7 @@ rm -f /tmp/kind-v*
 The tests are integrated into GitHub Actions workflows:
 
 - **PR validation**: `lint-helm-k8s`, unit tests, and Trivy / Kubescape scans run on every pull request
+- **Acceptance matrix**: On non-draft PRs to `main` (and via manual dispatch), the worker is deployed and the TCP target connection test runs in parallel across every Kubernetes version in `K8S_MATRIX_VERSIONS` (`acceptance-matrix` / `acceptance-test` jobs in `test.yml`). Requires the `K8S_MATRIX_VERSIONS` repository variable and the `BOUNDARY_*` secrets.
 - **Push validation**: Runs on pushes to main branches
 - **Release validation**: Runs before creating releases
 
@@ -519,13 +558,14 @@ See `.github/workflows/` for workflow configuration.
 
 ## Test Maintenance
 
-### Updating KIND versions
+### Updating Kubernetes versions
 
-The matrix test automatically resolves the two latest stable KIND versions. To update fallback versions (used when offline), edit `tests/acceptance/kind-version-matrix-test.sh`:
+The matrix test resolves versions from the `K8S_MATRIX_VERSIONS` repository variable (CI) or the `K8S_VERSIONS` / `K8S_MATRIX_VERSIONS` argument (local) — there are no hardcoded Kubernetes versions in the script. To change the tested set:
 
-```bash
-_FALLBACK_KIND_VERSIONS=("v0.30.0" "v0.29.0")
-```
+- **CI:** update the `K8S_MATRIX_VERSIONS` repository variable (Settings → Secrets and variables → Actions → Variables), e.g. `v1.36.1 v1.35.5 v1.34.8`.
+- **Local:** pass them on the command line, e.g. `make k8s-matrix-test K8S_MATRIX_VERSIONS="v1.36.1 v1.35.5"`.
+
+Use `kindest/node` tags that match your installed KIND version (each KIND release publishes a specific set). Available tags: https://hub.docker.com/r/kindest/node
 
 ### Updating test values
 

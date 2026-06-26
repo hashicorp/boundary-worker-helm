@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: "{{ include "boundary.fullname" . }}-test-worker-auth"
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "boundary.namespace" . }}
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: test
@@ -33,7 +33,7 @@ spec:
       echo "Test: Worker Authentication Token"
       echo "=========================================="
       
-      NAMESPACE="{{ .Release.Namespace }}"
+      NAMESPACE="{{ include "boundary.namespace" . }}"
       AUTH_PATH="{{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}"
       
       echo "Finding worker pod..."

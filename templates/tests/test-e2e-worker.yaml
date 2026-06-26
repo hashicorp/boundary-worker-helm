@@ -5,7 +5,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: "{{ include "boundary.fullname" . }}-test-e2e-worker"
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "boundary.namespace" . }}
   labels:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: test
@@ -53,7 +53,7 @@ spec:
       echo "Test: End-to-End Worker Functionality"
       echo "=========================================="
       
-      NAMESPACE="{{ .Release.Namespace }}"
+      NAMESPACE="{{ include "boundary.namespace" . }}"
       
       # Helper function to check if a port is open
       check_port() {

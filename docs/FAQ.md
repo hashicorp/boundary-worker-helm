@@ -8,7 +8,9 @@ The most common causes are:
 
 1. **No worker configuration provided** — The chart requires a valid Boundary HCL block in `worker.config`. The default in `values.yaml` is a template with placeholder values. Running `helm install` without customising `worker.config` will create a broken deployment. Set `worker.config` in your values file or supply the HCL with `--set-file worker.config=./worker.hcl`.
 
-2. **Missing PersistentVolume** — If the cluster has no default StorageClass or no pre-provisioned PersistentVolume, the PVCs will remain in `Pending` and the worker pod will not start. Override `storageClass` in your values file:
+2. **Missing activation-token Secret for controller-led registration** — If `worker.config` uses `controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"`, create the Secret named by `secretRefs.secretName` first, and ensure it contains the key configured by `secretRefs.keys.controllerGeneratedActivationToken`.
+
+3. **Missing PersistentVolume** — If the cluster has no default StorageClass or no pre-provisioned PersistentVolume, the PVCs will remain in `Pending` and the worker pod will not start. Override `storageClass` in your values file:
    ```yaml
    worker:
      persistence:
@@ -18,7 +20,7 @@ The most common causes are:
          storageClass: gp3
    ```
 
-3. **`helm lint` validation errors** — Run `helm lint .` before installing to catch rendering errors in your values.
+4. **`helm lint` validation errors** — Run `helm lint .` before installing to catch rendering errors in your values.
 
 ---
 
@@ -87,6 +89,38 @@ At minimum a usable config usually requires:
 - `auth_storage_path` if `worker.persistence.authStorage.enabled = true`
 
 See [Required Worker Configuration](../README.md#required-worker-configuration) in the README for a full example.
+
+### How do I source the controller-generated activation token from a Kubernetes Secret?
+
+Use the same pattern as the controller chart: inject the Secret as an environment variable and reference it from HCL using `env://`.
+
+Example values:
+
+```yaml
+secretRefs:
+  secretName: boundary-worker-secrets
+  keys:
+    controllerGeneratedActivationToken: worker-controller-generated-activation-token
+
+worker:
+  config: |
+    worker {
+      auth_storage_path = "/var/lib/boundary"
+      controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+    }
+
+    hcp_boundary_cluster_id = "<your-cluster-id>"
+```
+
+Create the Secret before install:
+
+```bash
+kubectl create secret generic boundary-worker-secrets \
+  --namespace boundary \
+  --from-literal=worker-controller-generated-activation-token='<activation-token>'
+```
+
+If you set `secretRefs.validateExisting=true`, Helm will fail early when that Secret is missing.
 
 ---
 
@@ -526,7 +560,7 @@ If you need to integrate with a cloud provider's Workload Identity mechanism (e.
 
 1. Delete the auth storage PVC contents (or the PVC itself).
 2. Generate a new activation token in Boundary.
-3. Update `worker.config` with the new token.
+3. Update the Kubernetes Secret or `worker.config`, depending on whether you use the secret-backed or inline-token workflow.
 4. Upgrade the Helm release.
 5. On first startup, the worker will re-register with the new token.
 
@@ -579,9 +613,9 @@ Each release creates its own Deployment, Services, PVCs, and ConfigMap. Each wor
 
 ### How do I integrate with the Vault Secrets Operator?
 
-The worker chart does not read from a Kubernetes Secret directly (unlike the controller chart). However, if you need to inject sensitive values such as KMS credentials or activation tokens, you can use the [Vault Secrets Operator (VSO)](https://developer.hashicorp.com/vault/docs/platform/k8s/vso) to sync a Vault KV secret into a Kubernetes Secret, then mount it as an environment variable or use a post-renderer to inject it into the `worker.config` ConfigMap.
+The worker chart can now read the controller-generated activation token from an existing Kubernetes Secret. You can use the [Vault Secrets Operator (VSO)](https://developer.hashicorp.com/vault/docs/platform/k8s/vso) to sync a Vault KV secret into the Secret named by `secretRefs.secretName`, with a key matching `secretRefs.keys.controllerGeneratedActivationToken`.
 
-For the activation token specifically, the simplest approach is to use `make worker-config` (which uses the Boundary CLI to create a worker resource and generate `worker.hcl` automatically) rather than managing the token as a Kubernetes secret.
+If you prefer not to manage a Secret, `make worker-config` still generates a standalone `worker.hcl` with an inline activation token for local and test automation workflows.
 
 ---
 

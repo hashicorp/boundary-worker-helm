@@ -1,0 +1,36 @@
+# Copyright IBM Corp. 2026
+
+suite: Validation checks
+templates:
+  - templates/validate.yaml
+tests:
+  - it: renders no validation output for default valid values
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no validation output when activation token is inline
+    set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "plain-inline-token"
+        }
+      secretRefs:
+        validateExisting: true
+        secretName: does-not-exist
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: fails when secretRefs.validateExisting is true and the referenced secret does not exist for env-backed activation tokens
+    set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+        }
+      secretRefs:
+        validateExisting: true
+        secretName: does-not-exist
+    asserts:
+      - failedTemplate:
+          errorPattern: "Secret \"does-not-exist\" not found"
