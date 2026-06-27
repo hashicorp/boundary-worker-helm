@@ -9,27 +9,52 @@ endif
 
 # Chart source for cloud install targets.
 # Supports local path (.), packaged chart URL, or repo/chart reference.
+# Use the public HashiCorp chart with:
+#   HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<chart version>
+#   (https://artifacthub.io/packages/helm/hashicorp/boundary-worker)
 HELM_CHART ?= .
 # Required only when HELM_CHART is a repo/chart reference.
 HELM_CHART_VERSION ?=
+# Helm repository URL used to resolve a repo/chart reference (e.g. hashicorp/boundary-worker).
+# Defaults to the public HashiCorp Helm repository.
+HELM_REPO_URL ?= https://helm.releases.hashicorp.com
+
+# Export so the values flow into recipes and sub-makes (e.g. eks-full -> eks-helm).
+# HELM_REPO_URL is not exported: it has a fixed default and is only used via $(HELM_REPO_URL).
+export HELM_CHART
+export HELM_CHART_VERSION
 
 # Always export the Kubernetes version matrix selection to recipe sub-shells,
 # even when no .env file is present (e.g. `make k8s-matrix-test K8S_MATRIX_VERSIONS=...`).
 export K8S_MATRIX_VERSIONS
 
 # Resolves HELM_CHART_REF and CHART_VERSION_ARG for cloud install targets.
-# HELM_CHART_VERSION is required only when HELM_CHART is a repo/chart reference.
+# When HELM_CHART is a repo/chart reference (e.g. hashicorp/boundary-worker):
+#   - HELM_CHART_VERSION is required.
+#   - the named Helm repo is added/updated from HELM_REPO_URL automatically,
+#     so the public ArtifactHub chart can be installed without a manual 'helm repo add'.
 define resolve_chart_version_arg
 	HELM_CHART_REF="$(HELM_CHART)"; \
 	CHART_VERSION_ARG=""; \
 	case "$${HELM_CHART_REF}" in \
-		.|./*|/*|*://*|*.tgz) ;; \
-		*/*) \
+		.|./*|/*) \
+			printf '\033[1;36m========================================================\033[0m\n'; \
+			printf '\033[1;36m📦 CHART SOURCE: LOCAL REPO\033[0m  (path: %s)\n' "$${HELM_CHART_REF}"; \
+			printf '\033[1;36m========================================================\033[0m\n' ;; \
+		*) \
 			if [ -z "$(HELM_CHART_VERSION)" ]; then \
-				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a repo/chart reference (got '$${HELM_CHART_REF}')."; \
+				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a published chart reference (got '$${HELM_CHART_REF}')."; \
 				exit 1; \
 			fi; \
-			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)" ;; \
+			printf '\033[1;32m========================================================\033[0m\n'; \
+			printf '\033[1;32m🌐 CHART SOURCE: PUBLISHED CHART\033[0m  (%s, version %s)\n' "$${HELM_CHART_REF}" "$(HELM_CHART_VERSION)"; \
+			printf '\033[1;32m   Repo: %s\033[0m\n' "$(HELM_REPO_URL)"; \
+			printf '\033[1;32m========================================================\033[0m\n'; \
+			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)"; \
+			HELM_REPO_ALIAS="$${HELM_CHART_REF%%/*}"; \
+			echo "Ensuring Helm repo '$${HELM_REPO_ALIAS}' ($(HELM_REPO_URL)) is configured..."; \
+			helm repo add "$${HELM_REPO_ALIAS}" "$(HELM_REPO_URL)" --force-update >/dev/null; \
+			helm repo update "$${HELM_REPO_ALIAS}" >/dev/null ;; \
 	esac
 endef
 
@@ -90,6 +115,7 @@ help:
 	@echo "  make eks-cleanup           - Uninstall Helm release from EKS (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
 	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
+	@echo "                               Public chart: HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<ver>"
 	@echo ""
 	@echo "Terraform EKS targets (recommended):"
 	@echo "  make tf-setup              - terraform init + apply (VPC + EKS + EBS CSI + LBC)"
@@ -105,6 +131,7 @@ help:
 	@echo "  make aks-cleanup           - Uninstall Helm release from AKS (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
 	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
+	@echo "                               Public chart: HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<ver>"
 	@echo ""
 	@echo "Terraform AKS targets:"
 	@echo "  make tf-setup-aks          - terraform init + apply (VNet + AKS + StorageClass)"
@@ -120,6 +147,7 @@ help:
 	@echo "  make gke-cleanup           - Uninstall Helm release from GKE (set DESTROY_CLUSTER=true to delete cluster)"
 	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
 	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
+	@echo "                               Public chart: HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<ver>"
 	@echo ""
 	@echo "Terraform GKE targets:"
 	@echo "  make tf-setup-gke          - terraform init + apply (GKE cluster + node pool)"
@@ -680,6 +708,7 @@ eks-helm:
 		--create-namespace \
 		--kube-context "$${EKS_CONTEXT}" \
 		--set worker.service.proxy.type=LoadBalancer \
+		--set 'worker.service.proxy.annotations.service\.beta\.kubernetes\.io/aws-load-balancer-scheme=internet-facing' \
 		--set worker.persistence.recording.storageClass=gp3 \
 		--set worker.persistence.authStorage.storageClass=gp3 \
 		--set-file worker.config=worker.hcl \
@@ -710,8 +739,8 @@ eks-full:
 	@echo "Full EKS Integration Workflow"
 	@echo "================================"
 	@echo ""
-	@echo "Using chart source: $(HELM_CHART)"
-	@echo "Using chart version: $(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
+	@printf '\033[1;36mUsing chart source: %s\033[0m\n' "$(HELM_CHART)"
+	@printf '\033[1;36mUsing chart version: %s\033[0m\n' "$(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup
 	@$(MAKE) worker-config
 	@$(MAKE) eks-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
@@ -902,8 +931,8 @@ aks-full:
 	@echo "Full AKS Integration Workflow"
 	@echo "================================"
 	@echo ""
-	@echo "Using chart source: $(HELM_CHART)"
-	@echo "Using chart version: $(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
+	@printf '\033[1;36mUsing chart source: %s\033[0m\n' "$(HELM_CHART)"
+	@printf '\033[1;36mUsing chart version: %s\033[0m\n' "$(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup-aks
 	@$(MAKE) worker-config
 	@$(MAKE) aks-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
@@ -1119,8 +1148,8 @@ gke-full:
 	@echo "Full GKE Integration Workflow"
 	@echo "================================"
 	@echo ""
-	@echo "Using chart source: $(HELM_CHART)"
-	@echo "Using chart version: $(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
+	@printf '\033[1;36mUsing chart source: %s\033[0m\n' "$(HELM_CHART)"
+	@printf '\033[1;36mUsing chart version: %s\033[0m\n' "$(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup-gke
 	@$(MAKE) worker-config
 	@$(MAKE) gke-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"

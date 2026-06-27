@@ -82,8 +82,11 @@ helm test boundary-worker -n boundary
 These tests cover:
 - Pod readiness and health endpoints
 - Proxy and ops Service reachability
+- Proxy `LoadBalancer` is internet-facing, validated per cloud provider (AWS requires the `aws-load-balancer-scheme: internet-facing` annotation; Azure/GCP are external by default and fail only if explicitly marked internal)
 - ConfigMap and volume mount correctness
 - Security context enforcement
+
+> **RBAC note:** To detect the cloud provider (via a node's `spec.providerID`) for the LoadBalancer check above, the test ServiceAccount is granted **read-only, cluster-scoped `get`/`list` on `nodes`** through a `ClusterRole`/`ClusterRoleBinding`. These are `helm.sh/hook: test` resources, created only during `helm test` and deleted after it completes.
 
 ---
 
@@ -297,25 +300,43 @@ make eks-setup
 make eks-helm
 ```
 
-By default `eks-helm` installs from the local git repo (`.`). To install from a published chart URL or Helm repo reference instead, set `HELM_CHART`.
-When using a Helm repo reference (`repo/chart`), you must also set `HELM_CHART_VERSION`.
+By default `eks-helm` installs from the local git repo (`.`). To install from the public HashiCorp chart or another Helm repo reference instead, set `HELM_CHART`.
+When using a Helm repo reference (`repo/chart`), you must also set `HELM_CHART_VERSION`. The named Helm repo is added/updated automatically from `HELM_REPO_URL` (defaults to the public HashiCorp repo `https://helm.releases.hashicorp.com`), so no manual `helm repo add` is required.
+
+> **Note:** Replace `<chart-version>` with the chart version you want to install. At the time of writing the latest published version is `0.1.0-beta`, but this changes with future releases — check the [chart's ArtifactHub page](https://artifacthub.io/packages/helm/hashicorp/boundary-worker) (or run `helm search repo hashicorp/boundary-worker --versions`) for the current version.
+
+There are two ways to point `eks-helm` at the public chart. Both produce the same install — pick whichever fits your workflow.
+
+**Option A — Pin the chart in `.env` (recommended for repeated runs)**
+
+Add these lines to your `.env` file once:
 
 ```bash
-# From a packaged chart URL
-make eks-helm HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
+# Pin the Helm chart source for cloud install targets (eks/aks/gke)
+export HELM_CHART=hashicorp/boundary-worker
+export HELM_CHART_VERSION=<chart-version>
+```
 
-# From a Helm repo reference (after helm repo add) with explicit chart version
-make eks-helm HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
+Then every cloud install picks them up automatically — no extra arguments needed:
 
-# Or export as an environment variable
-export HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
-make eks-helm
-
-# For repo/chart references, export both HELM_CHART and HELM_CHART_VERSION
-export HELM_CHART=myrepo/boundary-worker
-export HELM_CHART_VERSION=1.2.3
+```bash
 make eks-helm
 ```
+
+**Option B — Pass the chart on the command line (one-off, no `.env` change)**
+
+Useful for a single run or to try a different version without editing `.env`. Command-line values take precedence over `.env`:
+
+```bash
+# From the public HashiCorp chart on ArtifactHub
+# (https://artifacthub.io/packages/helm/hashicorp/boundary-worker)
+make eks-helm HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<chart-version>
+
+# From a custom Helm repo reference (override the repo URL)
+make eks-helm HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=<chart-version> HELM_REPO_URL=https://charts.example.com
+```
+
+> **Precedence:** command-line arguments override `.env`, which overrides the built-in default (`HELM_CHART=.`, the local git repo). So if you pin the values in `.env` (Option A), plain `make eks-helm` is enough; passing the arguments (Option B) is only needed to override that per run.
 
 #### Run tests
 
@@ -329,11 +350,8 @@ make eks-test
 # Local git repo (default)
 make eks-full
 
-# From a chart URL — installs and tests in one command
-make eks-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
-
-# From a Helm repo reference with explicit chart version
-make eks-full HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
+# From the public HashiCorp chart — installs and tests in one command
+make eks-full HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<chart-version>
 ```
 
 #### Cleanup
@@ -363,15 +381,32 @@ Integration tests deploy the worker chart to an AKS cluster provisioned with Ter
 
 #### Full workflow
 
+By default `aks-full` installs from the local git repo (`.`). To install from the public HashiCorp chart, set `HELM_CHART` / `HELM_CHART_VERSION` using either option below (same precedence as EKS: command-line args override `.env`, which overrides the local-repo default).
+
+> **Note:** Replace `<chart-version>` with a published chart version — see the [chart's ArtifactHub page](https://artifacthub.io/packages/helm/hashicorp/boundary-worker) (or run `helm search repo hashicorp/boundary-worker --versions`). At the time of writing the latest is `0.1.0-beta`.
+
+**Option A — Pin the chart in `.env` (recommended for repeated runs)**
+
+Add these lines to your `.env` file once, then just run `make aks-full`:
+
+```bash
+# Pin the Helm chart source for cloud install targets (eks/aks/gke)
+export HELM_CHART=hashicorp/boundary-worker
+export HELM_CHART_VERSION=<chart-version>
+```
+
+```bash
+make aks-full
+```
+
+**Option B — Pass the chart on the command line (one-off, no `.env` change)**
+
 ```bash
 # Local git repo (default)
 make aks-full
 
-# From a chart URL
-make aks-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
-
-# From a Helm repo reference with explicit chart version
-make aks-full HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
+# From the public HashiCorp chart — installs and tests in one command
+make aks-full HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<chart-version>
 ```
 
 #### Cleanup
@@ -403,15 +438,32 @@ Integration tests deploy the worker chart to a GKE cluster provisioned with Terr
 
 #### Full workflow
 
+By default `gke-full` installs from the local git repo (`.`). To install from the public HashiCorp chart, set `HELM_CHART` / `HELM_CHART_VERSION` using either option below (same precedence as EKS: command-line args override `.env`, which overrides the local-repo default).
+
+> **Note:** Replace `<chart-version>` with a published chart version — see the [chart's ArtifactHub page](https://artifacthub.io/packages/helm/hashicorp/boundary-worker) (or run `helm search repo hashicorp/boundary-worker --versions`). At the time of writing the latest is `0.1.0-beta`.
+
+**Option A — Pin the chart in `.env` (recommended for repeated runs)**
+
+Add these lines to your `.env` file once, then just run `make gke-full`:
+
+```bash
+# Pin the Helm chart source for cloud install targets (eks/aks/gke)
+export HELM_CHART=hashicorp/boundary-worker
+export HELM_CHART_VERSION=<chart-version>
+```
+
+```bash
+make gke-full
+```
+
+**Option B — Pass the chart on the command line (one-off, no `.env` change)**
+
 ```bash
 # Local git repo (default)
 make gke-full
 
-# From a chart URL
-make gke-full HELM_CHART=https://releases.example.com/boundary-worker-1.2.3.tgz
-
-# From a Helm repo reference with explicit chart version
-make gke-full HELM_CHART=myrepo/boundary-worker HELM_CHART_VERSION=1.2.3
+# From the public HashiCorp chart — installs and tests in one command
+make gke-full HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<chart-version>
 ```
 
 #### Cleanup

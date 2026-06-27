@@ -103,16 +103,55 @@ spec:
       TARGET_PORT=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].targetPort}')
       echo "✅ Target port is set to: $TARGET_PORT"
 
-      echo "Checking load balancer annotations match service type..."
+      echo "Checking the LoadBalancer is internet-facing (cloud-aware)..."
+      # Detect the cloud provider from a node's spec.providerID (aws://, azure://,
+      # gce://, ...). On AWS the LB scheme defaults to 'internal', so the
+      # 'internet-facing' annotation is mandatory. Azure and GCP LoadBalancers are
+      # external by default and only become private via an explicit annotation.
       LB_SCHEME=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.service\.beta\.kubernetes\.io/aws-load-balancer-scheme}')
+      AZURE_INTERNAL=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.service\.beta\.kubernetes\.io/azure-load-balancer-internal}')
+      GCP_LB_TYPE=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.networking\.gke\.io/load-balancer-type}')
+      if [ -z "$GCP_LB_TYPE" ]; then
+        GCP_LB_TYPE=$(kubectl get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.cloud\.google\.com/load-balancer-type}')
+      fi
+      GCP_LB_TYPE_LC=$(echo "$GCP_LB_TYPE" | tr '[:upper:]' '[:lower:]')
+      PROVIDER=$(kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' 2>/dev/null | cut -d: -f1)
+      echo "Detected cloud provider: ${PROVIDER:-<unknown>}"
       if [ "$EXPECTED_TYPE" = "LoadBalancer" ]; then
-        if [ "$LB_SCHEME" != "internet-facing" ]; then
-          echo "❌ FAILED: LoadBalancer service is missing the internet-facing annotation"
-          exit 1
-        fi
-        echo "✅ LoadBalancer annotations are present"
+        case "$PROVIDER" in
+          aws)
+            if [ "$LB_SCHEME" != "internet-facing" ]; then
+              echo "❌ FAILED: AWS LoadBalancer scheme is '${LB_SCHEME:-<none>}', expected 'internet-facing'"
+              exit 1
+            fi
+            echo "✅ AWS LoadBalancer is internet-facing" ;;
+          azure)
+            if [ "$AZURE_INTERNAL" = "true" ]; then
+              echo "❌ FAILED: Azure LoadBalancer is marked internal, expected internet-facing"
+              exit 1
+            fi
+            echo "✅ Azure LoadBalancer is internet-facing (external by default)" ;;
+          gce)
+            if [ "$GCP_LB_TYPE_LC" = "internal" ]; then
+              echo "❌ FAILED: GCP LoadBalancer is type Internal, expected external"
+              exit 1
+            fi
+            echo "✅ GCP LoadBalancer is internet-facing (external by default)" ;;
+          *)
+            # Unknown provider (e.g. KIND): fall back to a generic check that
+            # fails only when the LB is explicitly marked internal.
+            if [ -n "$LB_SCHEME" ] && [ "$LB_SCHEME" != "internet-facing" ]; then
+              echo "❌ FAILED: LoadBalancer scheme is '$LB_SCHEME', expected 'internet-facing'"
+              exit 1
+            fi
+            if [ "$AZURE_INTERNAL" = "true" ] || [ "$GCP_LB_TYPE_LC" = "internal" ]; then
+              echo "❌ FAILED: LoadBalancer is marked internal, expected internet-facing"
+              exit 1
+            fi
+            echo "✅ LoadBalancer is internet-facing" ;;
+        esac
       else
-        if [ -n "$LB_SCHEME" ]; then
+        if [ -n "$LB_SCHEME" ] || [ "$AZURE_INTERNAL" = "true" ] || [ -n "$GCP_LB_TYPE" ]; then
           echo "❌ FAILED: Non-LoadBalancer service should not include load balancer annotations"
           exit 1
         fi
