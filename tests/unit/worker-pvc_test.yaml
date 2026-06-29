@@ -238,3 +238,78 @@ tests:
       - notExists:
           path: spec.storageClassName
         documentIndex: 0
+
+  # ============================================================================
+  # RETENTION POLICY TESTS
+  # ============================================================================
+
+  - it: should add helm.sh/resource-policy keep annotation to recording PVC by default
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+        documentIndex: 0
+
+  - it: should add helm.sh/resource-policy keep annotation to auth PVC by default
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+        documentIndex: 0
+
+  - it: should add retention annotation to both PVCs when retainOnUninstall is true
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.recording.retainOnUninstall: true
+      worker.persistence.authStorage.enabled: true
+      worker.persistence.authStorage.retainOnUninstall: true
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+        documentIndex: 0
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+        documentIndex: 1
+
+  - it: should omit retention annotation on recording PVC when retainOnUninstall is false
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.recording.retainOnUninstall: false
+      worker.persistence.authStorage.enabled: false
+    asserts:
+      - notExists:
+          path: metadata.annotations["helm.sh/resource-policy"]
+        documentIndex: 0
+
+  - it: should omit retention annotation on auth PVC when retainOnUninstall is false
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
+      worker.persistence.authStorage.retainOnUninstall: false
+    asserts:
+      - notExists:
+          path: metadata.annotations["helm.sh/resource-policy"]
+        documentIndex: 0
+
+  - it: should support mixed retention settings across PVCs
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.recording.retainOnUninstall: true
+      worker.persistence.authStorage.enabled: true
+      worker.persistence.authStorage.retainOnUninstall: false
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+        documentIndex: 0
+      - notExists:
+          path: metadata.annotations["helm.sh/resource-policy"]
+        documentIndex: 1

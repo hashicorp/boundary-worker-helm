@@ -110,12 +110,14 @@ worker:
       accessMode: ReadWriteOnce
       storageClass: "" # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/boundary/recording"
+      retainOnUninstall: true # When true (default), the PVC is preserved after `helm uninstall`. Set to false to delete the PVC on uninstall.
     authStorage:
       enabled: false
       size: "1Gi"
       accessMode: ReadWriteOnce
       storageClass: "" # Uses cluster default StorageClass; set to e.g. "gp3" for AWS
       path: "/var/lib/boundary"
+      retainOnUninstall: true # When true (default), the PVC is preserved after `helm uninstall`. Set to false to delete the PVC on uninstall.
 
 # Secret References
 # Injects values from an existing Kubernetes Secret via secretKeyRef.
