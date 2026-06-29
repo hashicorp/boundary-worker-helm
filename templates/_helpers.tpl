@@ -199,6 +199,28 @@ false
 Validate manual Secret existence and required keys.
 Runs only when secretRefs.validateExisting=true and secretRefs.secretName is set.
 */}}
+{{/*
+Validate that the worker config uses the correct env reference when secretRefs.secretName is set.
+If the config has controller_generated_activation_token = "env://SOMETHING_ELSE", fail with a helpful message.
+*/}}
+{{- define "boundary.worker.validateEnvActivationTokenRef" -}}
+{{- if .Values.secretRefs.secretName -}}
+{{- $renderedConfig := tpl ((default "" .Values.worker.config) | toString) . -}}
+{{- $configNoComments := regexReplaceAll "(?m)^\\s*#.*$" $renderedConfig "" -}}
+{{- if regexMatch "controller_generated_activation_token\\s*=\\s*\"env://" $configNoComments -}}
+{{- if not (regexMatch "controller_generated_activation_token\\s*=\\s*\"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\"" $configNoComments) -}}
+{{- fail "Invalid worker.config: when secrets are enabled (secretRefs.secretName is set), use \"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\" for the controller_generated_activation_token env reference in your worker.config." -}}
+{{- end -}}
+{{- else if regexMatch "controller_generated_activation_token\\s*=\\s*\"[^\"]+\"" $configNoComments -}}
+{{- fail "Invalid worker.config: when secrets are enabled (secretRefs.secretName is set), do not hardcode the activation token directly in worker.config. Use the env reference instead:\n\n  controller_generated_activation_token = \"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\"" -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Validate manual Secret existence and required keys.
+Runs only when secretRefs.validateExisting=true and secretRefs.secretName is set.
+*/}}
 {{- define "boundary.worker.validateSecretRefs" -}}
 {{- if and .Values.secretRefs.validateExisting .Values.secretRefs.secretName (eq (include "boundary.worker.usesEnvActivationToken" .) "true") }}
 {{- $secretName := include "boundary.worker.secretName" . | trim -}}

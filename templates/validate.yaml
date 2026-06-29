@@ -3,4 +3,5 @@
 
 validate.yaml - Chart-wide validation. Produces no Kubernetes resources.
 */ -}}
+{{- include "boundary.worker.validateEnvActivationTokenRef" . -}}
 {{- include "boundary.worker.validateSecretRefs" . -}}
