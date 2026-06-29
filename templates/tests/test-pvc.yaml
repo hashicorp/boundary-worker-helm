@@ -37,6 +37,7 @@ spec:
       AUTH_PVC_NAME="{{ include "boundary.worker.authStoragePvcName" . }}"
       RECORDING_PVC_NAME="{{ include "boundary.worker.recordingPvcName" . }}"
       
+      {{- if .Values.worker.persistence.authStorage.enabled }}
       echo "Checking auth-storage PVC..."
       if ! kubectl get pvc "$AUTH_PVC_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
         echo "❌ FAILED: Auth storage PVC $AUTH_PVC_NAME does not exist"
@@ -70,6 +71,9 @@ spec:
       else
         echo "✅ Auth storage class is correct: $AUTH_STORAGE_CLASS"
       fi
+      {{- else }}
+      echo "ℹ️  Auth storage PVC is disabled"
+      {{- end }}
       
       {{- if .Values.worker.persistence.recording.enabled }}
       echo ""
@@ -114,9 +118,11 @@ spec:
       echo "=========================================="
       echo "✅ ALL CHECKS PASSED"
       echo "=========================================="
+      {{- if .Values.worker.persistence.authStorage.enabled }}
       echo "Auth Storage PVC: $AUTH_PVC_NAME ($AUTH_PVC_STATUS)"
       echo "  Size: $AUTH_PVC_SIZE"
       echo "  Storage Class: $AUTH_STORAGE_CLASS"
+      {{- end }}
       {{- if .Values.worker.persistence.recording.enabled }}
       echo "Recording Storage PVC: $RECORDING_PVC_NAME ($RECORDING_PVC_STATUS)"
       echo "  Size: $RECORDING_PVC_SIZE"

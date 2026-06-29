@@ -495,7 +495,9 @@ acceptance-helm:
 		--create-namespace \
 		--kube-context kind-acceptance \
 		--set worker.service.proxy.type=NodePort \
+		--set worker.persistence.recording.enabled=true \
 		--set worker.persistence.recording.storageClass=standard \
+		--set worker.persistence.authStorage.enabled=true \
 		--set worker.persistence.authStorage.storageClass=standard \
 		--set-file worker.config=worker.hcl \
 		--timeout 5m

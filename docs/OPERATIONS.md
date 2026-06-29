@@ -309,6 +309,18 @@ You can pass HCL directly with `--set-file` or template it from a values file. B
 
 For controller-led registration, the preferred pattern is to inject the activation token from an existing Kubernetes Secret using `secretRefs` and `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`. Inline activation tokens still work for externally generated HCL such as `make worker-config`.
 
+The activation token can be supplied in three ways:
+
+1. **Plaintext**: Set the value directly in the HCL (e.g. `"act_1234abcd..."`).
+2. **Kubernetes Secret (`secretRefs`)**: Set the value to `"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"` and configure `secretRefs.secretName` to point to a Secret containing the token key.
+3. **`extraEnv`**: Set the value to `"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"` and supply the token via `extraEnv`:
+
+   ```yaml
+   extraEnv:
+     - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
+       value: "act_1234abcd..."
+   ```
+
 ## Public Address And Service Exposure
 
 `public_addr` is a Boundary runtime setting in the worker HCL, not a Helm value. The chart does not compute or inject it automatically.

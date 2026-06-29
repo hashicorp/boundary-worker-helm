@@ -7,7 +7,7 @@ tests:
   # ============================================================================
   # RECORDING PVC TESTS
   # ============================================================================
-  
+
   - it: should configure recording PVC with all options
     release:
       name: test-release
@@ -46,6 +46,7 @@ tests:
   - it: should not create recording PVC when disabled
     set:
       worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
     asserts:
       - hasDocuments:
           count: 1
@@ -57,13 +58,14 @@ tests:
   # ============================================================================
   # AUTH STORAGE PVC TESTS
   # ============================================================================
-  
+
   - it: should configure auth storage PVC with all options
     release:
       name: test-release
       namespace: test-namespace
     set:
       worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: true
       worker.persistence.authStorage.size: 10Gi
       worker.persistence.authStorage.storageClass: standard-ssd
       worker.persistence.authStorage.accessMode: ReadWriteOnce
@@ -93,9 +95,10 @@ tests:
           path: spec.accessModes[0]
           value: ReadWriteOnce
 
-  - it: should create auth PVC by default
+  - it: should create auth PVC when enabled
     set:
       worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
     asserts:
       - hasDocuments:
           count: 1
@@ -141,10 +144,11 @@ tests:
   # ============================================================================
   # CONDITIONAL RENDERING TESTS
   # ============================================================================
-  
+
   - it: should create both PVCs when recording enabled
     set:
       worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: true
     asserts:
       - hasDocuments:
           count: 2
@@ -162,6 +166,7 @@ tests:
       namespace: custom-namespace
     set:
       worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: true
     asserts:
       - equal:
           path: metadata.namespace
@@ -175,13 +180,14 @@ tests:
   # ============================================================================
   # COMPLETE CONFIGURATION TEST
   # ============================================================================
-  
+
   - it: should render minimal auth PVC configuration
     release:
       name: minimal-worker
       namespace: test-ns
     set:
       worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
       worker.persistence.authStorage.size: 2Gi
       worker.persistence.authStorage.storageClass: local-path
       worker.persistence.authStorage.accessMode: ReadWriteOnce
@@ -203,4 +209,32 @@ tests:
       - equal:
           path: spec.storageClassName
           value: local-path
+        documentIndex: 0
+
+  # ============================================================================
+  # STORAGECLASS CONDITIONAL TESTS
+  # ============================================================================
+
+  - it: should omit storageClassName for recording PVC when storageClass is empty
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: false
+      worker.persistence.recording.storageClass: ""
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notExists:
+          path: spec.storageClassName
+        documentIndex: 0
+
+  - it: should omit storageClassName for auth PVC when storageClass is empty
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
+      worker.persistence.authStorage.storageClass: ""
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notExists:
+          path: spec.storageClassName
         documentIndex: 0
