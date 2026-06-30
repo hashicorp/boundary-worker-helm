@@ -9,18 +9,27 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: renders no validation output when activation token is inline
+  - it: renders no validation output when activation token is inline and no secretRefs configured
+    set:
+      worker.config: |
+        worker {
+          controller_generated_activation_token = "plain-inline-token"
+        }
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: fails when secretRefs.secretName is set and activation token is hardcoded inline
     set:
       worker.config: |
         worker {
           controller_generated_activation_token = "plain-inline-token"
         }
       secretRefs:
-        validateExisting: true
-        secretName: does-not-exist
+        secretName: my-secret
     asserts:
-      - hasDocuments:
-          count: 0
+      - failedTemplate:
+          errorPattern: "do not hardcode the activation token"
 
   - it: fails when secretRefs.validateExisting is true and the referenced secret does not exist for env-backed activation tokens
     set:
