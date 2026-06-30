@@ -212,7 +212,7 @@ If the config has controller_generated_activation_token = "env://SOMETHING_ELSE"
 {{- fail "Invalid worker.config: when secrets are enabled (secretRefs.secretName is set), use \"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\" for the controller_generated_activation_token env reference in your worker.config." -}}
 {{- end -}}
 {{- else if regexMatch "controller_generated_activation_token\\s*=\\s*\"[^\"]+\"" $configNoComments -}}
-{{- fail "Invalid worker.config: when secrets are enabled (secretRefs.secretName is set), do not hardcode the activation token directly in worker.config. Use the env reference instead:\n\n  controller_generated_activation_token = \"env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN\"" -}}
+{{- fail "Invalid worker.config: when secrets are enabled (secretRefs.secretName is set), do not hardcode the activation token directly in worker.config; use env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN instead." -}}
 {{- end -}}
 {{- end -}}
 {{- end }}
