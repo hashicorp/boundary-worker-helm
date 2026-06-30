@@ -12,6 +12,10 @@ First stable release of the Boundary Worker Helm chart, promoting `0.1.0-beta` w
 - **PVC retention policies** — New `worker.persistence.authStorage.retainOnDelete` and `worker.persistence.recording.retainOnDelete` boolean values (default `false`). When set to `true`, the chart sets `persistentVolumeClaimRetentionPolicy.whenDeleted: Retain` on the `Deployment`, preserving PVC data across `helm uninstall`. JSON Schema validation and unit tests added for both flags.
 - **Env reference validation for activation tokens** — `helm template` / `helm install` now fail with a clear error message if `secretRefs.secretName` is set and `worker.config` either hardcodes the activation token or uses an unexpected `env://` variable name. The only accepted reference is `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`.
 
+### Changed
+
+- Default worker image updated to `hashicorp/boundary-enterprise:1.0.0-ent`.
+
 ## [0.1.0-beta] - 2026-06-18
 
 Initial public beta release of the Boundary Worker Helm chart.
