@@ -9,7 +9,7 @@ First stable release of the Boundary Worker Helm chart, promoting `0.1.0-beta` w
 ### Added
 
 - **PVC default StorageClass** — PVCs now omit the `storageClassName` field when `worker.persistence.*.storageClass` is empty (`""`), causing Kubernetes to automatically provision storage using the cluster's default `StorageClass`. Previously an explicit class was required.
-- **PVC retention policies** — New `worker.persistence.authStorage.retainOnDelete` and `worker.persistence.recording.retainOnDelete` boolean values (default `false`). When set to `true`, the chart sets `persistentVolumeClaimRetentionPolicy.whenDeleted: Retain` on the `Deployment`, preserving PVC data across `helm uninstall`. JSON Schema validation and unit tests added for both flags.
+- **PVC retention policies** — New `worker.persistence.authStorage.retainOnUninstall` and `worker.persistence.recording.retainOnUninstall` boolean values (default `true`). When `true` (the default), the chart adds the `helm.sh/resource-policy: keep` annotation to the PVC, preserving it across `helm uninstall`. Set to `false` to have Helm delete the PVC on uninstall. JSON Schema validation and unit tests added for both flags.
 - **Env reference validation for activation tokens** — `helm template` / `helm install` now fail with a clear error message if `secretRefs.secretName` is set and `worker.config` either hardcodes the activation token or uses an unexpected `env://` variable name. The only accepted reference is `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN`.
 
 ### Changed
