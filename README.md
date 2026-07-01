@@ -13,9 +13,11 @@ By default, this chart deploys:
   - Proxy Service (`boundary-worker-proxy`) on port 9202
   - Ops Service (`boundary-worker-ops`) on port 9203
 - One ConfigMap for `worker.config`
-- Two optional PVCs:
-  - Auth storage PVC
-  - Recording storage PVC
+- Two optional PVCs (both disabled by default):
+  - Auth storage PVC (`worker.persistence.authStorage.enabled`)
+  - Recording storage PVC (`worker.persistence.recording.enabled`)
+
+  When a PVC is enabled, it is annotated with `helm.sh/resource-policy: keep` by default (`retainOnUninstall: true`), so it survives `helm uninstall`. Set `retainOnUninstall: false` to allow Helm to delete the PVC on uninstall.
 
 ## Prerequisites
 
