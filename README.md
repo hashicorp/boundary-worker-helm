@@ -13,9 +13,11 @@ By default, this chart deploys:
   - Proxy Service (`boundary-worker-proxy`) on port 9202
   - Ops Service (`boundary-worker-ops`) on port 9203
 - One ConfigMap for `worker.config`
-- Two optional PVCs:
-  - Auth storage PVC
-  - Recording storage PVC
+- Two optional PVCs (both disabled by default):
+  - Auth storage PVC (`worker.persistence.authStorage.enabled`)
+  - Recording storage PVC (`worker.persistence.recording.enabled`)
+
+  When a PVC is enabled, it is annotated with `helm.sh/resource-policy: keep` by default (`retainOnUninstall: true`), so it survives `helm uninstall`. Set `retainOnUninstall: false` to allow Helm to delete the PVC on uninstall.
 
 ## Prerequisites
 
@@ -64,6 +66,28 @@ helm upgrade boundary-worker hashicorp/boundary-worker \
   --rollback-on-failure \
   --wait
 ```
+
+## Kubernetes Secrets and env:// References
+
+When `secretRefs.secretName` is set, the chart injects the secret value as an environment variable and validates that `worker.config` references it using the correct `env://` variable name. Using a different variable name — or hardcoding the token directly in `worker.config` — causes the chart to fail during rendering before installation completes.
+
+The required `env://` reference for each secret-backed field is:
+
+| Field | Required env:// reference |
+| --- | --- |
+| `controller_generated_activation_token` | `env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN` |
+
+**Example `worker.config` snippet:**
+
+```hcl
+worker {
+  controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
+  ...
+}
+```
+
+If you use a different variable name, the chart fails during rendering with an error that identifies the field and the expected variable name.
+
 ----
 
 Please note: We take Boundary security and user trust seriously. If you believe you found a security issue in Boundary, please responsibly disclose it at [security@hashicorp.com](mailto:security@hashicorp.com).
