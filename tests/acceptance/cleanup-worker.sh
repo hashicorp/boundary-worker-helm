@@ -24,7 +24,7 @@ echo "Boundary Worker Cleanup"
 echo ""
 
 # Check if worker ID file exists
-WORKER_ID_FILE="/tmp/boundary-worker-id.txt"
+WORKER_ID_FILE="${BOUNDARY_WORKER_ID_FILE:-/tmp/boundary-worker-id.txt}"
 if [ ! -f "${WORKER_ID_FILE}" ]; then
     warn "Worker ID file not found at ${WORKER_ID_FILE}"
     warn "Worker may not have been registered or test did not complete"

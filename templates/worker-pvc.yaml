@@ -11,6 +11,10 @@ metadata:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
     storage-type: recording
+  {{- if (ne .Values.worker.persistence.recording.retainOnUninstall false) }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   accessModes:
     - {{ .Values.worker.persistence.recording.accessMode }}
@@ -36,6 +40,10 @@ metadata:
     {{- include "boundary.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
     storage-type: auth
+  {{- if (ne .Values.worker.persistence.authStorage.retainOnUninstall false) }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   accessModes:
     - {{ .Values.worker.persistence.authStorage.accessMode }}

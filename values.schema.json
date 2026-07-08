@@ -154,6 +154,9 @@
                 },
                 "path": {
                   "type": "string"
+                },
+                "retainOnUninstall": {
+                  "type": "boolean"
                 }
               }
             },
@@ -174,6 +177,9 @@
                 },
                 "path": {
                   "type": "string"
+                },
+                "retainOnUninstall": {
+                  "type": "boolean"
                 }
               }
             }
