@@ -20,6 +20,7 @@ export K8S_MATRIX_VERSIONS
 .PHONY: k8s-matrix-test k8s-matrix-cleanup
 .PHONY: openshift-smoke-test openshift-helm openshift-acceptance-test openshift-acceptance-full openshift-acceptance-cleanup
 .PHONY: crc-setup crc-helm crc-test crc-full crc-cleanup
+.PHONY: microshift-setup microshift-helm microshift-test microshift-full microshift-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
@@ -76,6 +77,13 @@ help:
 	@echo "  make crc-test      - Run full OpenShift acceptance suite against CRC"
 	@echo "  make crc-full      - Full CRC workflow (crc-setup + worker-config + crc-helm + crc-test)"
 	@echo "  make crc-cleanup   - Uninstall Helm release and stop CRC cluster"
+	@echo ""
+	@echo "OpenShift MicroShift (CI) Acceptance Testing targets:"
+	@echo "  make microshift-setup    - Start MicroShift AIO cluster in Docker (no external cluster needed)"
+	@echo "  make microshift-helm     - Install Helm chart on MicroShift with values.openshift.yaml"
+	@echo "  make microshift-test     - Run full OpenShift acceptance suite against MicroShift"
+	@echo "  make microshift-full     - Full MicroShift workflow (setup + worker-config + helm + test)"
+	@echo "  make microshift-cleanup  - Remove MicroShift container and cleanup"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
@@ -762,6 +770,150 @@ crc-cleanup:
 	@crc stop && echo "✅ CRC cluster stopped" || echo "⚠️  CRC stop failed"
 	@echo "✅ CRC cleanup complete"
 
+# ================================
+# OpenShift MicroShift (CI) Targets
+# ================================
+# Runs a throwaway MicroShift AIO cluster inside Docker — the same
+# pattern KIND uses for Kubernetes acceptance tests.
+# No external OCP cluster, CRC, or OCP_SERVER/OCP_TOKEN secrets are needed.
+
+microshift-setup:
+	@echo "================================"
+	@echo "Setting up MicroShift (OpenShift CI)"
+	@echo "================================"
+	@echo ""
+	@echo "Checking dependencies..."
+	@command -v docker >/dev/null 2>&1 || (echo "❌ docker is not installed"; exit 1)
+	@echo "✅ docker is installed"
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found. Run 'make setup-helm' first"; exit 1)
+	@echo "✅ helm is installed"
+	@if ! command -v oc >/dev/null 2>&1; then \
+		echo "Installing oc CLI..."; \
+		curl -Lo /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz; \
+		sudo tar -xzf /tmp/oc.tar.gz -C /usr/local/bin oc; \
+		rm -f /tmp/oc.tar.gz; \
+	fi
+	@echo "✅ oc CLI is installed ($$(oc version --client 2>/dev/null | head -n1))"
+	@echo ""
+	@echo "Creating storage loop device for MicroShift LVM (4 GB)..."
+	@sudo truncate -s 4G /tmp/microshift-disk.img
+	@LOOP=$$(sudo losetup --find --show /tmp/microshift-disk.img) && \
+		echo "$$LOOP" > /tmp/microshift-loop-device && \
+		echo "✅ Loop device: $$LOOP"
+	@echo ""
+	@echo "Starting MicroShift AIO cluster (this may take 2-3 minutes)..."
+	@LOOP_DEV=$$(cat /tmp/microshift-loop-device) && \
+	docker run -d \
+		--name microshift \
+		--privileged \
+		--network host \
+		--device "$$LOOP_DEV" \
+		-e MICROSHIFT_LVMD_DEVICE="$$LOOP_DEV" \
+		-v microshift-data:/var/lib/microshift \
+		quay.io/microshift/microshift-aio:latest
+	@echo "Waiting for MicroShift API to be ready (up to 3 minutes)..."
+	@timeout 180 bash -c \
+		'until docker exec microshift curl -sk https://localhost:6443/readyz 2>/dev/null | grep -q ok; do echo "  waiting..."; sleep 5; done' \
+		|| (echo "❌ MicroShift API did not become ready. Logs:"; docker logs microshift --tail 50; exit 1)
+	@echo "✅ MicroShift API is ready"
+	@echo ""
+	@echo "Configuring kubeconfig..."
+	@mkdir -p ~/.kube
+	@docker cp microshift:/var/lib/microshift/resources/kubeadmin/kubeconfig ~/.kube/config
+	@echo "Waiting for node to be Ready..."
+	@kubectl wait node --all --for=condition=Ready --timeout=120s
+	@echo "Waiting for StorageClass topolvm-provisioner..."
+	@timeout 120 bash -c \
+		'until kubectl get storageclass topolvm-provisioner >/dev/null 2>&1; do sleep 3; done' \
+		|| echo "⚠️  topolvm-provisioner not yet available; continuing"
+	@oc cluster-info
+	@echo "✅ MicroShift cluster is ready"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - Generate worker config: make worker-config"
+	@echo "  - Install Helm chart:     make microshift-helm"
+	@echo "  - Run tests:              make microshift-test"
+	@echo "  - Full workflow:          make microshift-full"
+
+microshift-helm:
+	@echo "============================================"
+	@echo "Installing Helm Chart on MicroShift"
+	@echo "============================================"
+	@echo ""
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@echo "Installing boundary-worker chart with values.openshift.yaml..."
+	@helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		-f values.openshift.yaml \
+		--set worker.persistence.recording.storageClass=topolvm-provisioner \
+		--set worker.persistence.authStorage.storageClass=topolvm-provisioner \
+		--set worker.resources.requests.memory=128Mi \
+		--set worker.resources.requests.cpu=50m \
+		--set worker.resources.limits.memory=512Mi \
+		--set worker.resources.limits.cpu=200m \
+		--set-file worker.config=worker.hcl \
+		--wait \
+		--timeout 5m
+	@echo "✅ Helm chart installed on MicroShift"
+	@echo ""
+	@oc get all -n boundary
+
+microshift-test:
+	@echo "================================"
+	@echo "MicroShift OpenShift Acceptance Tests"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found"; exit 1)
+	@SKIP_HELM_INSTALL=true bash tests/acceptance/openshift-smoke-test.sh
+	@bash tests/acceptance/openshift-tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
+	@echo "✅ All MicroShift acceptance tests passed!"
+	@echo ""
+
+microshift-full:
+	@echo "================================"
+	@echo "Running Full MicroShift Acceptance Workflow"
+	@echo "================================"
+	@echo ""
+	@if docker inspect microshift >/dev/null 2>&1; then \
+		echo "⚠️  MicroShift container already exists — skipping microshift-setup"; \
+	else \
+		$(MAKE) microshift-setup; \
+	fi
+	@$(MAKE) worker-config
+	@$(MAKE) microshift-helm
+	@$(MAKE) microshift-test
+	@echo ""
+	@echo "To cleanup, run: make microshift-cleanup"
+	@echo ""
+
+microshift-cleanup:
+	@echo "================================"
+	@echo "Cleaning up MicroShift"
+	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
+	@echo "Uninstalling Helm release..."
+	@helm uninstall boundary-worker --namespace boundary 2>/dev/null && echo "✅ Helm release uninstalled" || echo "⚠️  Helm release not found"
+	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo ""
+	@echo "Stopping and removing MicroShift container..."
+	@docker stop microshift 2>/dev/null && docker rm microshift 2>/dev/null \
+		&& echo "✅ MicroShift container removed" || echo "⚠️  MicroShift container not found"
+	@docker volume rm microshift-data 2>/dev/null || true
+	@echo "Removing loop device and disk image..."
+	@if [ -f /tmp/microshift-loop-device ]; then \
+		LOOP_DEV=$$(cat /tmp/microshift-loop-device); \
+		sudo losetup -d "$$LOOP_DEV" 2>/dev/null || true; \
+		rm -f /tmp/microshift-loop-device; \
+	fi
+	@sudo rm -f /tmp/microshift-disk.img
+	@echo "✅ MicroShift cleanup complete"
+
 
 # Note: acceptance-full does NOT run the Kubernetes version matrix test.
 # The matrix manages its own cluster lifecycle (it deletes/recreates the
@@ -792,8 +944,8 @@ acceptance-all:
 	@echo "--- Phase 1: Kubernetes (KIND) Acceptance Tests ---"
 	@$(MAKE) acceptance-full
 	@echo ""
-	@echo "--- Phase 2: OpenShift (CRC) Acceptance Tests ---"
-	@$(MAKE) crc-full
+	@echo "--- Phase 2: OpenShift (MicroShift) Acceptance Tests ---"
+	@$(MAKE) microshift-full
 	@echo ""
 	@echo "✅ All acceptance tests passed (Kubernetes + OpenShift)!"
 	@echo ""
