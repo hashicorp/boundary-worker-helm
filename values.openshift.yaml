@@ -8,10 +8,10 @@
 #     -f values.openshift.yaml \
 #     --set-file worker.config=./worker.hcl
 
-# TODO: remove before merging — replace with official OpenShift-certified image when available.
+# OpenShift-compatible UBI-based image (AMD64), publicly available on ECR.
 image:
-  repository: public.ecr.aws/g0u5x5a3/boundary-ent
-  tag: "0.21.0-ubi-arm64"
+  repository: public.ecr.aws/g0u5x5a3/boundary-enterprise
+  tag: "1.0.0-ent-ubi"
 
 openshift:
   enabled: true

@@ -166,14 +166,15 @@ fi
 echo ""
 
 # ── Boundary API: confirm worker record exists (activation token consumed) ────
-info "Verifying worker record exists in Boundary..."
-WORKERS_JSON=$(boundary workers list \
-    -scope-id global \
-    -addr "${BOUNDARY_ADDR}" \
-    -token env://BOUNDARY_TOKEN \
-    -format json 2>&1) || fail "Failed to list workers from Boundary:\n${WORKERS_JSON}"
-
-WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
+info "Verifying worker record exists in Boundary (waiting up to 3m for registration)..."
+WORKER_ID=""
+for i in $(seq 1 36); do
+    WORKERS_JSON=$(boundary workers list \
+        -scope-id global \
+        -addr "${BOUNDARY_ADDR}" \
+        -token env://BOUNDARY_TOKEN \
+        -format json 2>/dev/null || true)
+    WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for w in data.get('items', []):
@@ -182,8 +183,11 @@ for w in data.get('items', []):
         print(w.get('id', ''))
         break
 " 2>/dev/null || true)
-
-[ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
+    [ -n "${WORKER_ID}" ] && break
+    info "  Worker not registered yet (attempt ${i}/36, waited $(( (i-1)*5 ))s)..."
+    sleep 5
+done
+[ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary after 3 minutes. Pod outbound connectivity may be broken."
 pass "Worker record exists in Boundary: ${WORKER_ID}"
 
 # Save WORKER_ID for cleanup

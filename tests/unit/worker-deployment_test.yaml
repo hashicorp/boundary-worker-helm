@@ -96,13 +96,25 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[4].mountPath
           value: /custom/recording
 
-  - it: should not mount recording volume when disabled
+  - it: should mount recording volume with emptyDir when disabled
     template: worker-deployment.yaml
     set:
       worker.persistence.recording.enabled: false
     asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[4].name
+          value: recording-storage
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[4].mountPath
+          value: /boundary/recording
+      - equal:
+          path: spec.template.spec.volumes[4].name
+          value: recording-storage
+      - equal:
+          path: spec.template.spec.volumes[4].emptyDir
+          value: {}
       - isNull:
-          path: spec.template.spec.containers[0].volumeMounts[4]
+          path: spec.template.spec.volumes[4].persistentVolumeClaim
 
   # ============================================================================
   # SECURITY CONTEXT TESTS
@@ -379,8 +391,6 @@ tests:
     template: worker-deployment.yaml
     release:
       name: test-release
-    set:
-      worker.persistence.recording.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.volumes[0].name
@@ -403,8 +413,6 @@ tests:
 
   - it: should configure volume mounts correctly
     template: worker-deployment.yaml
-    set:
-      worker.persistence.recording.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.containers[0].volumeMounts[0].name
@@ -467,6 +475,28 @@ tests:
       - equal:
           path: spec.template.spec.volumes[3].persistentVolumeClaim.claimName
           value: test-release-auth-storage
+
+  # ============================================================================
+  # HOST NETWORK TESTS
+  # ============================================================================
+
+  - it: should not set hostNetwork by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.hostNetwork
+
+  - it: should set hostNetwork and dnsPolicy when hostNetwork is true
+    template: worker-deployment.yaml
+    set:
+      hostNetwork: true
+    asserts:
+      - equal:
+          path: spec.template.spec.hostNetwork
+          value: true
+      - equal:
+          path: spec.template.spec.dnsPolicy
+          value: Default
 
   # ============================================================================
   # DEPLOYMENT SPEC TESTS

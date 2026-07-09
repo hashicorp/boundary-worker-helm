@@ -209,3 +209,8 @@ podAnnotations: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# hostNetwork: run the pod in the host network namespace.
+# Useful for CI environments (e.g. MicroShift in Docker) where pod egress
+# routing is unavailable. Do NOT enable in production OpenShift deployments.
+hostNetwork: false

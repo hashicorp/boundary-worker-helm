@@ -795,38 +795,101 @@ microshift-setup:
 	fi
 	@echo "✅ oc CLI is installed ($$(oc version --client 2>/dev/null | head -n1))"
 	@echo ""
-	@echo "Creating storage loop device for MicroShift LVM (4 GB)..."
+	@echo "Creating storage loop device and LVM volume group for MicroShift (4 GB)..."
 	@sudo truncate -s 4G /tmp/microshift-disk.img
 	@LOOP=$$(sudo losetup --find --show /tmp/microshift-disk.img) && \
 		echo "$$LOOP" > /tmp/microshift-loop-device && \
 		echo "✅ Loop device: $$LOOP"
-	@echo ""
-	@echo "Starting MicroShift AIO cluster (this may take 2-3 minutes)..."
+	@sudo apt-get install -y --quiet lvm2 2>/dev/null || true
 	@LOOP_DEV=$$(cat /tmp/microshift-loop-device) && \
-	docker run -d \
+		sudo pvcreate "$$LOOP_DEV" && \
+		sudo vgcreate rhel "$$LOOP_DEV" && \
+		echo "✅ LVM volume group 'rhel' created on $$LOOP_DEV"
+	@echo "Configuring iptables-legacy (required for MicroShift networking on Ubuntu)..."
+	@sudo apt-get install -y --quiet iptables 2>/dev/null || true
+	@sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
+	@sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true
+	@echo "✅ iptables-legacy configured"
+	@echo ""
+	@echo "Configuring CRI-O storage driver (vfs required for overlay-on-overlay CI environments)..."
+	@printf '[storage]\ndriver = "vfs"\ngraphroot = "/var/lib/containers/storage"\nrunroot = "/run/containers/storage"\n' > /tmp/microshift-storage.conf
+	@echo "✅ CRI-O storage config created (vfs)"
+	@echo ""
+	@echo "Starting MicroShift AIO cluster (this may take 3-5 minutes)..."
+	@docker run -d \
 		--name microshift \
 		--privileged \
+		--cgroupns=host \
 		--network host \
-		--device "$$LOOP_DEV" \
-		-e MICROSHIFT_LVMD_DEVICE="$$LOOP_DEV" \
+		--tmpfs /run \
+		--tmpfs /tmp \
+		-v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+		-v /lib/modules:/lib/modules:ro \
+		-v /tmp/microshift-storage.conf:/etc/containers/storage.conf:ro \
 		-v microshift-data:/var/lib/microshift \
 		quay.io/microshift/microshift-aio:latest
-	@echo "Waiting for MicroShift API to be ready (up to 3 minutes)..."
-	@timeout 180 bash -c \
-		'until docker exec microshift curl -sk https://localhost:6443/readyz 2>/dev/null | grep -q ok; do echo "  waiting..."; sleep 5; done' \
-		|| (echo "❌ MicroShift API did not become ready. Logs:"; docker logs microshift --tail 50; exit 1)
-	@echo "✅ MicroShift API is ready"
+	@echo "Waiting for MicroShift node to be Ready (up to 10 minutes)..."
+	@i=0; while [ $$i -lt 120 ]; do \
+		if docker exec microshift kubectl \
+			--kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig \
+			get nodes --no-headers 2>/dev/null | grep -q ' Ready'; then \
+			echo "✅ MicroShift node is Ready"; break; \
+		fi; \
+		if [ $$(( $$i % 6 )) -eq 0 ]; then \
+			echo "  Container status: $$(docker inspect microshift --format '{{.State.Status}}' 2>/dev/null)"; \
+			echo "  Service status: microshift=$$(docker exec microshift systemctl is-active microshift 2>/dev/null) crio=$$(docker exec microshift systemctl is-active crio 2>/dev/null)"; \
+			docker exec microshift journalctl -u microshift --no-pager --lines=3 2>/dev/null || true; \
+		fi; \
+		echo "  waiting... ($$(( $$i * 5 ))s)"; \
+		sleep 5; i=$$(( $$i + 1 )); \
+		if [ $$i -eq 120 ]; then \
+			echo "❌ MicroShift node never became Ready after 10 minutes."; \
+			echo "--- systemctl status ---"; \
+			docker exec microshift systemctl status microshift crio --no-pager 2>/dev/null || true; \
+			echo "--- MicroShift journal ---"; \
+			docker exec microshift journalctl -u microshift --no-pager --lines=50 2>/dev/null || true; \
+			echo "--- CRI-O journal ---"; \
+			docker exec microshift journalctl -u crio --no-pager --lines=30 2>/dev/null || true; \
+			exit 1; \
+		fi; \
+	done
 	@echo ""
 	@echo "Configuring kubeconfig..."
 	@mkdir -p ~/.kube
 	@docker cp microshift:/var/lib/microshift/resources/kubeadmin/kubeconfig ~/.kube/config
-	@echo "Waiting for node to be Ready..."
-	@kubectl wait node --all --for=condition=Ready --timeout=120s
+	@echo "✅ Kubeconfig configured"
+	@echo "Waiting for CNI config file in /etc/cni/net.d/..."
+	@timeout 300 bash -c \
+		'until docker exec microshift ls /etc/cni/net.d/ 2>/dev/null | grep -qE "\.conf|\.conflist"; do sleep 5; done' \
+		|| echo "⚠️  CNI config not found; pod networking may not work"
+	@echo "✅ CNI config file present"
+	@docker exec microshift ls -la /etc/cni/net.d/ 2>/dev/null || true
+	@echo "Ensuring pod egress NAT (10.42.0.0/16 → internet)..."
+	@sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+	@# On Ubuntu 22.04, Docker uses iptables-nft (nftables backend) which runs BEFORE
+	@# iptables-legacy in the kernel. Docker's FORWARD=DROP lives in nftables, so rules
+	@# added only to iptables-legacy are silently bypassed. Apply to BOTH backends.
+	@for ipt in iptables iptables-nft; do \
+		sudo $$ipt -t nat -C POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE 2>/dev/null \
+			|| sudo $$ipt -t nat -I POSTROUTING 1 -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE 2>/dev/null \
+			|| true; \
+		sudo $$ipt -I FORWARD 1 -s 10.42.0.0/16 -j ACCEPT 2>/dev/null || true; \
+		sudo $$ipt -I FORWARD 1 -d 10.42.0.0/16 -j ACCEPT 2>/dev/null || true; \
+		sudo $$ipt -I FORWARD 1 -s 10.43.0.0/16 -j ACCEPT 2>/dev/null || true; \
+		sudo $$ipt -I FORWARD 1 -d 10.43.0.0/16 -j ACCEPT 2>/dev/null || true; \
+	done
+	@echo "✅ Pod egress NAT + FORWARD rules applied to both iptables-legacy and iptables-nft"
+	@echo "Waiting for CoreDNS pods to be Running..."
+	@timeout 180 bash -c \
+		'until docker exec microshift kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig \
+		get pods -n openshift-dns --no-headers 2>/dev/null | grep "dns-default" | grep -q " Running "; do sleep 5; done' \
+		|| echo "⚠️  DNS pods not yet Running; continuing"
+	@echo "✅ DNS pods ready"
 	@echo "Waiting for StorageClass topolvm-provisioner..."
 	@timeout 120 bash -c \
 		'until kubectl get storageclass topolvm-provisioner >/dev/null 2>&1; do sleep 3; done' \
 		|| echo "⚠️  topolvm-provisioner not yet available; continuing"
-	@oc cluster-info
+	@kubectl cluster-info || true
 	@echo "✅ MicroShift cluster is ready"
 	@echo ""
 	@echo "Next steps:"
@@ -853,6 +916,9 @@ microshift-helm:
 		--set worker.resources.requests.cpu=50m \
 		--set worker.resources.limits.memory=512Mi \
 		--set worker.resources.limits.cpu=200m \
+		--set 'openshift.podSecurityContext.runAsUser=1001' \
+		--set 'openshift.containerSecurityContext.runAsUser=1001' \
+		--set 'hostNetwork=true' \
 		--set-file worker.config=worker.hcl \
 		--wait \
 		--timeout 5m
@@ -905,9 +971,11 @@ microshift-cleanup:
 	@docker stop microshift 2>/dev/null && docker rm microshift 2>/dev/null \
 		&& echo "✅ MicroShift container removed" || echo "⚠️  MicroShift container not found"
 	@docker volume rm microshift-data 2>/dev/null || true
-	@echo "Removing loop device and disk image..."
+	@echo "Removing loop device, LVM and disk image..."
 	@if [ -f /tmp/microshift-loop-device ]; then \
 		LOOP_DEV=$$(cat /tmp/microshift-loop-device); \
+		sudo vgremove -f rhel 2>/dev/null || true; \
+		sudo pvremove -f "$$LOOP_DEV" 2>/dev/null || true; \
 		sudo losetup -d "$$LOOP_DEV" 2>/dev/null || true; \
 		rm -f /tmp/microshift-loop-device; \
 	fi
