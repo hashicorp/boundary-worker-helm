@@ -152,7 +152,8 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
-       github.base_ref == 'main')
+       github.base_ref == 'main' &&
+       github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     needs: [unit-test, security]
     outputs:
@@ -196,7 +197,8 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
-       github.base_ref == 'main')
+       github.base_ref == 'main' &&
+       github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     needs: acceptance-matrix
     strategy:
@@ -240,7 +242,8 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
-       github.base_ref == 'main')
+       github.base_ref == 'main' &&
+       github.event.pull_request.draft == false)
     env:
       BOUNDARY_ADDR: ${{ secrets.BOUNDARY_ADDR }}
       BOUNDARY_AUTH_METHOD_ID: ${{ secrets.BOUNDARY_AUTH_METHOD_ID }}
