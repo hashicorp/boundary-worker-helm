@@ -48,7 +48,6 @@ Install with custom values:
 
 ```bash
 helm install boundary-worker hashicorp/boundary-worker \
-  --version 0.1.0 \
   --namespace boundary \
   --values my-values.yaml \
   --wait
@@ -60,7 +59,6 @@ Standard upgrade:
 
 ```bash
 helm upgrade boundary-worker hashicorp/boundary-worker \
-  --version 0.1.0 \
   --namespace boundary \
   --values my-values.yaml \
   --rollback-on-failure \
