@@ -2,6 +2,18 @@
 
 All notable changes to the Boundary Worker Helm Chart will be documented in this file.
 
+## Unreleased
+
+## [0.1.1] - 2026-07-30
+
+### Changed
+
+- Default worker image updated to `hashicorp/boundary-enterprise:1.0.1-ent`.
+
+### Removed
+
+- Removed Slack status notification step from the release workflow (`hashicorp/actions-slack-status`).
+
 ## [0.1.0] - 2026-06-30
 
 First stable release of the Boundary Worker Helm chart, promoting `0.1.0-beta` with the following additions.

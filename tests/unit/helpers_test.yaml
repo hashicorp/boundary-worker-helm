@@ -141,11 +141,11 @@ tests:
     template: worker-deployment.yaml
     chart:
       name: boundary-worker
-      version: 0.1.0
+      version: 0.1.1
     asserts:
       - equal:
           path: metadata.labels["helm.sh/chart"]
-          value: boundary-worker-0.1.0
+          value: boundary-worker-0.1.1
 
   # Test managed-by label
   - it: should have Helm as managed-by label
