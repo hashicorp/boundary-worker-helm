@@ -13,6 +13,16 @@ Boundary Worker:
 
 To complete the setup:
 
+{{- if .Values.openshift.enabled }}
+1. Get the OpenShift Route hostname:
+   oc get route {{ include "boundary.worker.route.name" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}'
+
+2. Update your worker.hcl with the Route hostname as the public address, then upgrade:
+   helm upgrade {{ .Release.Name }} . \
+     --namespace {{ .Release.Namespace }} \
+     -f values.openshift.yaml \
+     --set-file worker.config="<path/to/worker.hcl>"
+{{- else }}
 1. Wait for LoadBalancer service to get external address:
    kubectl get svc {{ include "boundary.worker.proxy.serviceName" . }} -n {{ .Release.Namespace }}
 
@@ -21,5 +31,6 @@ To complete the setup:
      --namespace {{ .Release.Namespace }} \
      -f <path/to/your-values.yaml> \
      --set-file worker.config="<path/to/worker.hcl>"
+{{- end }}
 
 For more information, visit https://github.com/hashicorp/boundary-worker-helm
