@@ -189,6 +189,41 @@ Get the service account name for the worker
 {{- end }}
 
 {{/*
+Build the worker image reference.
+
+Repository resolution order (first non-empty wins):
+  1. .Values.image.repository  — explicit operator override
+  2. openshift.enabled=true    → registry.connect.redhat.com/hashicorp/boundary-enterprise
+  3. default                   → hashicorp/boundary-enterprise
+
+Tag resolution:
+  - Explicit .Values.image.tag always wins as-is.
+  - When tag is empty and openshift.enabled=true, appends "-ubi" to Chart.AppVersion
+    because the Red Hat registry uses the "<version>-ubi" tag convention
+    (e.g. 1.0.1-ent-ubi) while Docker Hub uses "<version>" (e.g. 1.0.1-ent).
+  - When tag is empty and openshift.enabled=false, uses Chart.AppVersion directly.
+*/}}
+{{- define "boundary.worker.image" -}}
+{{- $repo := .Values.image.repository -}}
+{{- if not $repo -}}
+  {{- if .Values.openshift.enabled -}}
+    {{- $repo = "registry.connect.redhat.com/hashicorp/boundary-enterprise" -}}
+  {{- else -}}
+    {{- $repo = "hashicorp/boundary-enterprise" -}}
+  {{- end -}}
+{{- end -}}
+{{- $tag := .Values.image.tag | trim -}}
+{{- if not $tag -}}
+  {{- if .Values.openshift.enabled -}}
+    {{- $tag = printf "%s-ubi" .Chart.AppVersion -}}
+  {{- else -}}
+    {{- $tag = .Chart.AppVersion -}}
+  {{- end -}}
+{{- end -}}
+{{- printf "%s:%s" $repo $tag -}}
+{{- end }}
+
+{{/*
 Returns true when worker config uses the chart-managed env-backed activation token.
 Commented lines are ignored.
 */}}

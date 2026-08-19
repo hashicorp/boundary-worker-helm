@@ -666,6 +666,16 @@ openshift-acceptance-cleanup:
 # ================================
 # OpenShift Local (CRC) Targets
 # ================================
+# Run acceptance tests against a local OpenShift cluster using CRC (OpenShift Local).
+# Requires CRC installed and running on your machine: https://developers.redhat.com/products/openshift-local
+#
+# Usage:
+#   make crc-full      – full workflow (setup → worker-config → install → test)
+#   make crc-setup     – start CRC and configure oc context
+#   make crc-helm      – install the Helm chart on CRC
+#   make crc-test      – run the OpenShift acceptance suite against CRC
+#   make crc-cleanup   – uninstall and stop CRC
+# ================================
 
 crc-setup:
 	@echo "================================"
@@ -915,7 +925,8 @@ microshift-helm:
 		rm -f /tmp/rh-auth.json; \
 		echo "✅ CRI-O auth configured for registry.connect.redhat.com"; \
 		echo "Pre-pulling boundary-enterprise image into CRI-O cache (up to 3 attempts)..."; \
-		PULL_IMAGE="registry.connect.redhat.com/hashicorp/boundary-enterprise:1.0-ent"; \
+		CHART_APP_VERSION=$$(grep '^appVersion:' Chart.yaml | sed 's/appVersion: *//;s/"//g'); \
+		PULL_IMAGE="registry.connect.redhat.com/hashicorp/boundary-enterprise:$${CHART_APP_VERSION}-ubi"; \
 		PULL_OK=0; \
 		for attempt in 1 2 3; do \
 			echo "  attempt $$attempt/3..."; \
@@ -945,6 +956,7 @@ microshift-helm:
 		--set worker.resources.requests.cpu=50m \
 		--set worker.resources.limits.memory=512Mi \
 		--set worker.resources.limits.cpu=200m \
+		--set 'openshift.route.proxy.enabled=true' \
 		--set 'openshift.podSecurityContext.runAsUser=1001' \
 		--set 'openshift.containerSecurityContext.runAsUser=1001' \
 		--set 'hostNetwork=true' \

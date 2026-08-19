@@ -186,10 +186,10 @@ tests:
   # OPENSHIFT SERVICE TESTS
   # ============================================================================
 
-  - it: should use ClusterIP for proxy service when openshift.enabled is true
+  - it: renders proxy service as ClusterIP when configured for OpenShift
     set:
       worker.service.proxy.enabled: true
-      worker.service.proxy.type: LoadBalancer
+      worker.service.proxy.type: ClusterIP
       openshift.enabled: true
     documentIndex: 0
     asserts:
