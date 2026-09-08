@@ -7,9 +7,56 @@ ifneq (,$(wildcard .env))
   export
 endif
 
+# Chart source for cloud install targets.
+# Supports local path (.), packaged chart URL, or repo/chart reference.
+# Use the public HashiCorp chart with:
+#   HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<chart version>
+#   (https://artifacthub.io/packages/helm/hashicorp/boundary-worker)
+HELM_CHART ?= .
+# Required only when HELM_CHART is a repo/chart reference.
+HELM_CHART_VERSION ?=
+# Helm repository URL used to resolve a repo/chart reference (e.g. hashicorp/boundary-worker).
+# Defaults to the public HashiCorp Helm repository.
+HELM_REPO_URL ?= https://helm.releases.hashicorp.com
+
+# Export so the values flow into recipes and sub-makes (e.g. eks-full -> eks-helm).
+# HELM_REPO_URL is not exported: it has a fixed default and is only used via $(HELM_REPO_URL).
+export HELM_CHART
+export HELM_CHART_VERSION
+
 # Always export the Kubernetes version matrix selection to recipe sub-shells,
 # even when no .env file is present (e.g. `make k8s-matrix-test K8S_MATRIX_VERSIONS=...`).
 export K8S_MATRIX_VERSIONS
+
+# Resolves HELM_CHART_REF and CHART_VERSION_ARG for cloud install targets.
+# When HELM_CHART is a repo/chart reference (e.g. hashicorp/boundary-worker):
+#   - HELM_CHART_VERSION is required.
+#   - the named Helm repo is added/updated from HELM_REPO_URL automatically,
+#     so the public ArtifactHub chart can be installed without a manual 'helm repo add'.
+define resolve_chart_version_arg
+	HELM_CHART_REF="$(HELM_CHART)"; \
+	CHART_VERSION_ARG=""; \
+	case "$${HELM_CHART_REF}" in \
+		.|./*|/*) \
+			printf '\033[1;36m========================================================\033[0m\n'; \
+			printf '\033[1;36m📦 CHART SOURCE: LOCAL REPO\033[0m  (path: %s)\n' "$${HELM_CHART_REF}"; \
+			printf '\033[1;36m========================================================\033[0m\n' ;; \
+		*) \
+			if [ -z "$(HELM_CHART_VERSION)" ]; then \
+				echo "❌ HELM_CHART_VERSION is required when HELM_CHART is a published chart reference (got '$${HELM_CHART_REF}')."; \
+				exit 1; \
+			fi; \
+			printf '\033[1;32m========================================================\033[0m\n'; \
+			printf '\033[1;32m🌐 CHART SOURCE: PUBLISHED CHART\033[0m  (%s, version %s)\n' "$${HELM_CHART_REF}" "$(HELM_CHART_VERSION)"; \
+			printf '\033[1;32m   Repo: %s\033[0m\n' "$(HELM_REPO_URL)"; \
+			printf '\033[1;32m========================================================\033[0m\n'; \
+			CHART_VERSION_ARG="--version $(HELM_CHART_VERSION)"; \
+			HELM_REPO_ALIAS="$${HELM_CHART_REF%%/*}"; \
+			echo "Ensuring Helm repo '$${HELM_REPO_ALIAS}' ($(HELM_REPO_URL)) is configured..."; \
+			helm repo add "$${HELM_REPO_ALIAS}" "$(HELM_REPO_URL)" --force-update >/dev/null; \
+			helm repo update "$${HELM_REPO_ALIAS}" >/dev/null ;; \
+	esac
+endef
 
 # ================================
 # PHONY Declarations
@@ -66,6 +113,9 @@ help:
 	@echo "  make eks-test              - Run full EKS acceptance test suite"
 	@echo "  make eks-full              - Full EKS workflow (eks-setup + worker-config + helm + test)"
 	@echo "  make eks-cleanup           - Uninstall Helm release from EKS (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
+	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
+	@echo "                               Public chart: HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<ver>"
 	@echo ""
 	@echo "Terraform EKS targets (recommended):"
 	@echo "  make tf-setup              - terraform init + apply (VPC + EKS + EBS CSI + LBC)"
@@ -79,6 +129,9 @@ help:
 	@echo "  make aks-test              - Run full AKS integration test suite"
 	@echo "  make aks-full              - Full AKS workflow (aks-setup + worker-config + helm + test)"
 	@echo "  make aks-cleanup           - Uninstall Helm release from AKS (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
+	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
+	@echo "                               Public chart: HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<ver>"
 	@echo ""
 	@echo "Terraform AKS targets:"
 	@echo "  make tf-setup-aks          - terraform init + apply (VNet + AKS + StorageClass)"
@@ -92,6 +145,9 @@ help:
 	@echo "  make gke-test              - Run full GKE integration test suite"
 	@echo "  make gke-full              - Full GKE workflow (gke-setup + worker-config + helm + test)"
 	@echo "  make gke-cleanup           - Uninstall Helm release from GKE (set DESTROY_CLUSTER=true to delete cluster)"
+	@echo "                               Optional: HELM_CHART=<local path|chart tgz URL|repo/chart> (default: .)"
+	@echo "                               Optional: HELM_CHART_VERSION=<chart version> (required with repo/chart)"
+	@echo "                               Public chart: HELM_CHART=hashicorp/boundary-worker HELM_CHART_VERSION=<ver>"
 	@echo ""
 	@echo "Terraform GKE targets:"
 	@echo "  make tf-setup-gke          - terraform init + apply (GKE cluster + node pool)"
@@ -644,28 +700,28 @@ eks-helm:
 	@AWS_ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || \
 		{ echo "❌ AWS credentials not configured"; exit 1; }; \
 	EKS_CONTEXT="arn:aws:eks:$${AWS_REGION}:$${AWS_ACCOUNT_ID}:cluster/$${EKS_CLUSTER_NAME}"; \
+	$(resolve_chart_version_arg); \
 	echo "Updating kubeconfig for cluster $${EKS_CLUSTER_NAME}..."; \
 	aws eks update-kubeconfig --name "$${EKS_CLUSTER_NAME}" --region "$${AWS_REGION}"; \
-	if helm status boundary-worker -n boundary --kube-context "$${EKS_CONTEXT}" >/dev/null 2>&1; then \
-		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make eks-cleanup' first to reinstall."; \
-	else \
-		echo "Installing boundary-worker chart with EKS values..."; \
-		helm install boundary-worker . \
-			--namespace boundary \
-			--create-namespace \
-			--kube-context "$${EKS_CONTEXT}" \
-			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=gp3 \
-			--set worker.persistence.authStorage.storageClass=gp3 \
-			--set-file worker.config=worker.hcl \
-			--timeout 10m \
-			--rollback-on-failure; \
-	fi; \
+	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with EKS values..."; \
+	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
+		$${CHART_VERSION_ARG} \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${EKS_CONTEXT}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set 'worker.service.proxy.annotations.service\.beta\.kubernetes\.io/aws-load-balancer-scheme=internet-facing' \
+		--set worker.persistence.recording.storageClass=gp3 \
+		--set worker.persistence.authStorage.storageClass=gp3 \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--wait \
+		--atomic; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${EKS_CONTEXT}"
 	@echo ""
-	@echo "✅ Helm chart installed on EKS"
+	@echo "✅ Helm chart installed/upgraded on EKS"
 	@echo ""
 
 eks-test:
@@ -685,9 +741,11 @@ eks-full:
 	@echo "Full EKS Integration Workflow"
 	@echo "================================"
 	@echo ""
+	@printf '\033[1;36mUsing chart source: %s\033[0m\n' "$(HELM_CHART)"
+	@printf '\033[1;36mUsing chart version: %s\033[0m\n' "$(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup
 	@$(MAKE) worker-config
-	@$(MAKE) eks-helm
+	@$(MAKE) eks-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
 	@$(MAKE) eks-test
 	@echo ""
 	@echo "✅ End-to-end EKS workflow has been completed successfully"
@@ -829,27 +887,26 @@ aks-helm:
 		--name "$${AKS_CLUSTER_NAME}" \
 		--overwrite-existing; \
 	AKS_CONTEXT="$${AKS_CLUSTER_NAME}"; \
+	$(resolve_chart_version_arg); \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-managed-csi-premium}"; \
-	if helm status boundary-worker -n boundary --kube-context "$${AKS_CONTEXT}" >/dev/null 2>&1; then \
-		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make aks-cleanup' first to reinstall."; \
-	else \
-		echo "Installing boundary-worker chart with AKS values..."; \
-		helm install boundary-worker . \
-			--namespace boundary \
-			--create-namespace \
-			--kube-context "$${AKS_CONTEXT}" \
-			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
-			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
-			--set-file worker.config=worker.hcl \
-			--timeout 10m \
-			--rollback-on-failure; \
-	fi; \
+	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with AKS values..."; \
+	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
+		$${CHART_VERSION_ARG} \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${AKS_CONTEXT}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
+		--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--wait \
+		--atomic; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${AKS_CONTEXT}"
 	@echo ""
-	@echo "✅ Helm chart installed on AKS"
+	@echo "✅ Helm chart installed/upgraded on AKS"
 	@echo ""
 
 aks-test:
@@ -876,9 +933,11 @@ aks-full:
 	@echo "Full AKS Integration Workflow"
 	@echo "================================"
 	@echo ""
+	@printf '\033[1;36mUsing chart source: %s\033[0m\n' "$(HELM_CHART)"
+	@printf '\033[1;36mUsing chart version: %s\033[0m\n' "$(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup-aks
 	@$(MAKE) worker-config
-	@$(MAKE) aks-helm
+	@$(MAKE) aks-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
 	@$(MAKE) aks-test
 	@echo ""
 	@echo "✅ End-to-end AKS workflow has been completed successfully"
@@ -1052,27 +1111,26 @@ gke-helm:
 		--zone "$${GKE_ZONE}" \
 		--project "$${GCP_PROJECT_ID}"; \
 	GKE_CONTEXT="gke_$${GCP_PROJECT_ID}_$${GKE_ZONE}_$${GKE_CLUSTER_NAME}"; \
+	$(resolve_chart_version_arg); \
 	STORAGE_CLASS="$${TF_STORAGE_CLASS_NAME:-standard-rwo}"; \
-	if helm status boundary-worker -n boundary --kube-context "$${GKE_CONTEXT}" >/dev/null 2>&1; then \
-		echo "⚠️  Release 'boundary-worker' already installed — skipping. Run 'make gke-cleanup' first to reinstall."; \
-	else \
-		echo "Installing boundary-worker chart with GKE values..."; \
-		helm install boundary-worker . \
-			--namespace boundary \
-			--create-namespace \
-			--kube-context "$${GKE_CONTEXT}" \
-			--set worker.service.proxy.type=LoadBalancer \
-			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
-			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
-			--set-file worker.config=worker.hcl \
-			--timeout 10m \
-			--rollback-on-failure; \
-	fi; \
+	echo "Installing/upgrading boundary-worker chart from '$${HELM_CHART_REF}' with GKE values..."; \
+	helm upgrade --install boundary-worker "$${HELM_CHART_REF}" \
+		$${CHART_VERSION_ARG} \
+		--namespace boundary \
+		--create-namespace \
+		--kube-context "$${GKE_CONTEXT}" \
+		--set worker.service.proxy.type=LoadBalancer \
+		--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
+		--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+		--set-file worker.config=worker.hcl \
+		--timeout 10m \
+		--wait \
+		--atomic; \
 	echo ""; \
 	echo "Deployed resources:"; \
 	kubectl get all -n boundary --context "$${GKE_CONTEXT}"
 	@echo ""
-	@echo "✅ Helm chart installed on GKE"
+	@echo "✅ Helm chart installed/upgraded on GKE"
 	@echo ""
 
 gke-test:
@@ -1092,9 +1150,11 @@ gke-full:
 	@echo "Full GKE Integration Workflow"
 	@echo "================================"
 	@echo ""
+	@printf '\033[1;36mUsing chart source: %s\033[0m\n' "$(HELM_CHART)"
+	@printf '\033[1;36mUsing chart version: %s\033[0m\n' "$(if $(HELM_CHART_VERSION),$(HELM_CHART_VERSION),<auto/local>)"
 	@$(MAKE) tf-setup-gke
 	@$(MAKE) worker-config
-	@$(MAKE) gke-helm
+	@$(MAKE) gke-helm HELM_CHART="$(HELM_CHART)" HELM_CHART_VERSION="$(HELM_CHART_VERSION)"
 	@$(MAKE) gke-test
 	@echo ""
 	@echo "✅ End-to-end GKE workflow has been completed successfully"
@@ -1227,6 +1287,102 @@ tf-destroy:
 	@echo "⚠️  This will delete the EKS cluster, VPC, node groups, IAM roles, and all associated resources."
 	@echo ""
 	@command -v terraform >/dev/null 2>&1 || { echo "❌ terraform not found"; exit 1; }
+	@STATE_FILE="tests/integration/terraform/aws/terraform.tfstate"; \
+	if [ ! -f "$$STATE_FILE" ]; then \
+		echo "❌ Terraform state file not found: $$STATE_FILE"; \
+		echo "   The cluster may have been provisioned outside this workspace, or state was lost."; \
+		echo "   Use 'make eks-cleanup' with manual AWS CLI cleanup if the cluster still exists."; \
+		exit 1; \
+	fi; \
+	RESOURCE_COUNT=$$(python3 -c "import json,sys; d=json.load(open('$$STATE_FILE')); print(len(d.get('resources', [])))" 2>/dev/null || echo 0); \
+	if [ "$$RESOURCE_COUNT" = "0" ]; then \
+		echo "⚠️  Terraform state is empty (0 resources tracked)."; \
+		echo "   terraform destroy would exit 0 without deleting anything."; \
+		echo ""; \
+		CLUSTER_NAME="$${EKS_CLUSTER_NAME:-boundary-k8s-cluster-1}"; \
+		CLUSTER_STATUS=$$(aws eks describe-cluster --name "$$CLUSTER_NAME" --region "$${AWS_REGION}" \
+			--query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND"); \
+		if [ "$$CLUSTER_STATUS" = "NOT_FOUND" ] || [ "$$CLUSTER_STATUS" = "None" ]; then \
+			echo "✅ Cluster '$$CLUSTER_NAME' not found in AWS — already deleted."; \
+			exit 0; \
+		else \
+			echo "⚠️  Terraform state is out of sync — falling back to direct AWS CLI cleanup."; \
+			echo ""; \
+			VPC_ID=$$(aws eks describe-cluster --name "$$CLUSTER_NAME" --region "$${AWS_REGION}" \
+				--query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || echo ""); \
+			echo "--- Deleting node groups for cluster '$$CLUSTER_NAME' ---"; \
+			for ng in $$(aws eks list-nodegroups --cluster-name "$$CLUSTER_NAME" --region "$${AWS_REGION}" \
+				--query 'nodegroups[*]' --output text | tr '\t' '\n'); do \
+				echo "  Deleting node group: $$ng"; \
+				aws eks delete-nodegroup --cluster-name "$$CLUSTER_NAME" --nodegroup-name "$$ng" \
+					--region "$${AWS_REGION}" --output json > /dev/null; \
+				echo "  Waiting for node group '$$ng' to be deleted..."; \
+				aws eks wait nodegroup-deleted --cluster-name "$$CLUSTER_NAME" \
+					--nodegroup-name "$$ng" --region "$${AWS_REGION}"; \
+				echo "  ✅ Node group '$$ng' deleted"; \
+			done; \
+			echo "--- Deleting NAT Gateways in VPC '$$VPC_ID' ---"; \
+			for nat in $$(aws ec2 describe-nat-gateways --region "$${AWS_REGION}" \
+				--filter "Name=vpc-id,Values=$$VPC_ID" "Name=state,Values=available,pending" \
+				--query 'NatGateways[*].NatGatewayId' --output text | tr '\t' '\n'); do \
+				EIP=$$(aws ec2 describe-nat-gateways --region "$${AWS_REGION}" \
+					--nat-gateway-ids "$$nat" \
+					--query 'NatGateways[0].NatGatewayAddresses[0].AllocationId' --output text 2>/dev/null); \
+				echo "  Deleting NAT Gateway: $$nat"; \
+				aws ec2 delete-nat-gateway --nat-gateway-id "$$nat" --region "$${AWS_REGION}" > /dev/null; \
+				aws ec2 wait nat-gateway-deleted --nat-gateway-ids "$$nat" --region "$${AWS_REGION}"; \
+				echo "  ✅ NAT Gateway deleted"; \
+				if [ -n "$$EIP" ] && [ "$$EIP" != "None" ]; then \
+					aws ec2 release-address --allocation-id "$$EIP" --region "$${AWS_REGION}" 2>/dev/null \
+						&& echo "  ✅ EIP $$EIP released" || echo "  ⚠️  Could not release EIP $$EIP (may be shared)"; \
+				fi; \
+			done; \
+			echo "--- Deleting EKS cluster '$$CLUSTER_NAME' ---"; \
+			aws eks delete-cluster --name "$$CLUSTER_NAME" --region "$${AWS_REGION}" > /dev/null; \
+			aws eks wait cluster-deleted --name "$$CLUSTER_NAME" --region "$${AWS_REGION}"; \
+			echo "✅ Cluster deleted"; \
+			if [ -n "$$VPC_ID" ] && [ "$$VPC_ID" != "None" ]; then \
+				echo "--- Cleaning up VPC '$$VPC_ID' ---"; \
+				for igw in $$(aws ec2 describe-internet-gateways --region "$${AWS_REGION}" \
+					--filters "Name=attachment.vpc-id,Values=$$VPC_ID" \
+					--query 'InternetGateways[*].InternetGatewayId' --output text | tr '\t' '\n'); do \
+					aws ec2 detach-internet-gateway --internet-gateway-id "$$igw" --vpc-id "$$VPC_ID" --region "$${AWS_REGION}" 2>/dev/null || true; \
+					aws ec2 delete-internet-gateway --internet-gateway-id "$$igw" --region "$${AWS_REGION}" && echo "  ✅ IGW $$igw deleted"; \
+				done; \
+				for subnet in $$(aws ec2 describe-subnets --region "$${AWS_REGION}" \
+					--filters "Name=vpc-id,Values=$$VPC_ID" \
+					--query 'Subnets[*].SubnetId' --output text | tr '\t' '\n'); do \
+					aws ec2 delete-subnet --subnet-id "$$subnet" --region "$${AWS_REGION}" 2>/dev/null && echo "  ✅ Subnet $$subnet deleted" || true; \
+				done; \
+				for rt in $$(aws ec2 describe-route-tables --region "$${AWS_REGION}" \
+					--filters "Name=vpc-id,Values=$$VPC_ID" \
+					--query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | tr '\t' '\n'); do \
+					aws ec2 delete-route-table --route-table-id "$$rt" --region "$${AWS_REGION}" 2>/dev/null && echo "  ✅ Route table $$rt deleted" || true; \
+				done; \
+				for sg in $$(aws ec2 describe-security-groups --region "$${AWS_REGION}" \
+					--filters "Name=vpc-id,Values=$$VPC_ID" \
+					--query "SecurityGroups[?GroupName!='default'].GroupId" --output text | tr '\t' '\n'); do \
+					INGRESS=$$(aws ec2 describe-security-groups --region "$${AWS_REGION}" --group-ids "$$sg" \
+						--query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null); \
+					[ "$$INGRESS" != "[]" ] && [ -n "$$INGRESS" ] && \
+						aws ec2 revoke-security-group-ingress --group-id "$$sg" --region "$${AWS_REGION}" \
+							--ip-permissions "$$INGRESS" > /dev/null 2>/dev/null || true; \
+					EGRESS=$$(aws ec2 describe-security-groups --region "$${AWS_REGION}" --group-ids "$$sg" \
+						--query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null); \
+					[ "$$EGRESS" != "[]" ] && [ -n "$$EGRESS" ] && \
+						aws ec2 revoke-security-group-egress --group-id "$$sg" --region "$${AWS_REGION}" \
+							--ip-permissions "$$EGRESS" > /dev/null 2>/dev/null || true; \
+					aws ec2 delete-security-group --group-id "$$sg" --region "$${AWS_REGION}" 2>/dev/null \
+						&& echo "  ✅ SG $$sg deleted" || echo "  ⚠️  SG $$sg skipped"; \
+				done; \
+				aws ec2 delete-vpc --vpc-id "$$VPC_ID" --region "$${AWS_REGION}" \
+					&& echo "✅ VPC $$VPC_ID deleted" || echo "❌ VPC $$VPC_ID could not be deleted — check for remaining dependencies"; \
+			fi; \
+			echo ""; \
+			echo "✅ Manual AWS CLI cleanup complete"; \
+			exit 0; \
+		fi; \
+	fi
 	@cd tests/integration/terraform/aws && \
 		terraform destroy -auto-approve \
 			-var="aws_region=$${AWS_REGION}" \
