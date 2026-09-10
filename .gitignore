@@ -17,3 +17,4 @@ worker.hcl
 *.tfstate.backup
 *.tfstate.*.backup
 *.tfplan
+my-values.yaml

@@ -1,12 +1,14 @@
 # Copyright IBM Corp. 2026
-
-# Default values for Boundary Worker Helm Chart
+# SPDX-License-Identifier: MPL-2.0
 
 nameOverride: ""
 fullnameOverride: ""
 namespace: ""
 
-# Boundary image configuration
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+
 image:
   repository: ""
   tag: ""
@@ -14,21 +16,47 @@ image:
 
 imagePullSecrets: []
 
-# Worker configuration
+# ---------------------------------------------------------------------------
+# TLS
+# ---------------------------------------------------------------------------
+
+tls:
+  ops:
+    disabled: true
+  secretName: ""
+  mountPath: ""
+
+# ---------------------------------------------------------------------------
+# Secret References
+# ---------------------------------------------------------------------------
+
+secretRefs:
+  secretName: ""
+  validateExisting: false
+  keys:
+    controllerGeneratedActivationToken: "worker-controller-generated-activation-token"
+
+# ---------------------------------------------------------------------------
+# Worker
+# ---------------------------------------------------------------------------
+
 worker:
   config: |
     disable_mlock = true
 
+    # hcp_boundary_cluster_id = "your-cluster-id-here" # Optional: set when registering with HCP Boundary.
+
     listener "tcp" {
       address = "0.0.0.0:9202"
       purpose = "proxy"
-      
     }
 
     listener "tcp" {
       address     = "0.0.0.0:9203"
       purpose     = "ops"
-      tls_disable = true
+      tls_disable   = "{{ .Values.tls.ops.disabled }}"
+      tls_cert_file = "{{ .Values.tls.mountPath }}/tls.crt"
+      tls_key_file  = "{{ .Values.tls.mountPath }}/tls.key"
     }
 
     worker {
@@ -41,11 +69,8 @@ worker:
         type = ["worker", "egress"]
       }
 
-
       controller_generated_activation_token = "controller-led-activation-token-here" # Optional: set when using controller-led worker registration. Requires setting the token value via Kubernetes Secret and referencing it with worker.extraEnv or worker.secretRefs. If not set, the worker will attempt to register without a token, which only works if the Boundary Controller is configured to allow tokenless registration. See docs/OPERATIONS.md for the three ways to supply the token.
     }
-
-    # hcp_boundary_cluster_id = "your-cluster-id-here" # Optional: set when registering with HCP Boundary.
 
     events {
       audit_enabled        = true
@@ -58,17 +83,14 @@ worker:
         format = "hclog-text"
       }
     }
-  # Liveness probe configuration
+  
   livenessProbe:
-    scheme: HTTP
     initialDelaySeconds: 10
     periodSeconds: 10
     failureThreshold: 3
     timeoutSeconds: 5
 
-  # Readiness probe configuration
   readinessProbe:
-    scheme: HTTP
     initialDelaySeconds: 10
     periodSeconds: 10
     failureThreshold: 3
@@ -78,25 +100,19 @@ worker:
   # This long grace period allows active Boundary sessions to complete naturally before pod termination.
   # Adjust based on your maximum expected session duration. Sessions longer than this will be forcibly terminated.
   terminationGracePeriodSeconds: 7200
+
   service:
     proxy:
-      enabled: true
-      # ⚠️ SECURITY WARNING: LoadBalancer type creates a public endpoint in most cloud environments.
-      # This exposes the worker proxy to the internet. For production, consider:
-      # - Using ClusterIP with an Ingress controller
-      # - Setting scheme to "internal" in annotations
-      # - Implementing network policies
-      # Note: ignored when openshift.enabled=true — the proxy port is exposed via a Route instead.
       type: LoadBalancer
       port: 9202
       targetPort: 9202
       annotations: {}
     ops:
-      enabled: true
       type: ClusterIP
       port: 9203
       targetPort: 9203
       annotations: {}
+
   resources:
     limits:
       cpu: 200m
@@ -104,6 +120,7 @@ worker:
     requests:
       cpu: 100m
       memory: 512Mi
+
   persistence:
     recording:
       enabled: false
@@ -120,24 +137,10 @@ worker:
       path: "/var/lib/boundary"
       retainOnUninstall: true # When true (default), the PVC is preserved after `helm uninstall`. Set to false to delete the PVC on uninstall.
 
-# Secret References
-# Injects values from an existing Kubernetes Secret via secretKeyRef.
-# Set secretName and point worker.config token to "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN".
-secretRefs:
-  secretName: ""
-  validateExisting: false
-  keys:
-    controllerGeneratedActivationToken: "worker-controller-generated-activation-token"
+# ---------------------------------------------------------------------------
+# Security Context
+# ---------------------------------------------------------------------------
 
-# Extra environment variables to inject into the worker container.
-# Supports any valid Kubernetes env entry (name/value or name/valueFrom).
-# Example:
-#   extraEnv:
-#     - name: BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN
-#       value: "my-token"
-extraEnv: []
-
-# Pod security context
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 100
@@ -160,16 +163,23 @@ containerSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
-# ServiceAccount configuration
-# Annotate with IRSA (eks.amazonaws.com/role-arn) or Workload Identity to grant
-# the worker pod cloud-provider permissions (e.g. AWS KMS) without Kubernetes Secrets.
+# ---------------------------------------------------------------------------
+# ServiceAccount
+# ---------------------------------------------------------------------------
+# The chart does not create a ServiceAccount
+# Set to an existing ServiceAccount name when cloud identity or custom permissions are required.
 serviceAccount:
-  create: false
-  name: "" # Defaults to the chart fullname when empty
-  annotations: {}
-  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/boundary-worker-role
-  # iam.gke.io/gcp-service-account: boundary-worker@PROJECT.iam.gserviceaccount.com
-  automountServiceAccountToken: false # Set to true when using IRSA or Workload Identity
+  name: ""
+  automountServiceAccountToken: false 
+
+# ---------------------------------------------------------------------------
+# Optional configurations
+# ---------------------------------------------------------------------------
+podAnnotations: {}
+nodeSelector: {}
+affinity: {}
+tolerations: []
+extraEnv: []
 
 # ---------------------------------------------------------------------------
 # OpenShift
@@ -194,18 +204,12 @@ openshift:
     proxy:
       enabled: true
       host: ""
-      tls:
-        # passthrough keeps TLS end-to-end to the worker; use edge only if you terminate TLS at the router.
-        termination: passthrough
       annotations: {}
-
-# Optional configurations
-podAnnotations: {}
-nodeSelector: {}
-tolerations: []
-affinity: {}
-
-# hostNetwork: run the pod in the host network namespace.
-# Useful for CI environments (e.g. MicroShift in Docker) where pod egress
-# routing is unavailable. Do NOT enable in production OpenShift deployments.
-hostNetwork: false
+    ops:
+      enabled: true
+      host: ""
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+        destinationCACertificate: ""
+      annotations: {}

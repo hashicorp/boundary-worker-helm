@@ -1,4 +1,5 @@
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
 # Auto-load .env if present (strips 'export ' prefix for Make compatibility)
 ifneq (,$(wildcard .env))

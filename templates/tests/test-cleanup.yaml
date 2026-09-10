@@ -60,8 +60,7 @@ spec:
       
       echo ""
       echo "Checking Service ownership..."
-      {{- if .Values.worker.service.proxy.enabled }}
-      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+       PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
       PROXY_MANAGED=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')
       
       if [ "$PROXY_MANAGED" = "Helm" ]; then
@@ -69,10 +68,8 @@ spec:
       else
         echo "⚠️  WARNING: Proxy service may not be managed by Helm"
       fi
-      {{- end }}
       
-      {{- if .Values.worker.service.ops.enabled }}
-      OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
+       OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
       OPS_MANAGED=$(kubectl get service "$OPS_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')
       
       if [ "$OPS_MANAGED" = "Helm" ]; then
@@ -80,7 +77,6 @@ spec:
       else
         echo "⚠️  WARNING: Ops service may not be managed by Helm"
       fi
-      {{- end }}
       
       echo ""
       echo "Checking ConfigMap ownership..."

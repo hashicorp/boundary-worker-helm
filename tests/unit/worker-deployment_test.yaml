@@ -48,6 +48,8 @@ tests:
 
   - it: should use chart default terminationGracePeriodSeconds when not overridden
     template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: false
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
@@ -318,6 +320,9 @@ tests:
 
   - it: should configure health probes
     template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: false
+      tls.mountPath: /etc/boundary/tls
     asserts:
       - isNotNull:
           path: spec.template.spec.containers[0].livenessProbe
@@ -327,6 +332,9 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.port
           value: ops
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
           value: 10
@@ -338,6 +346,42 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.port
           value: ops
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: should use HTTP probes and omit TLS volume when ops TLS is disabled
+    template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTP
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTP
+      - isNull:
+          path: spec.template.spec.containers[0].volumeMounts[5]
+      - isNull:
+          path: spec.template.spec.volumes[5]
+
+  - it: should mount the configured TLS secret for ops TLS
+    template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: false
+      tls.secretName: custom-worker-tls
+      tls.mountPath: /custom/tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].name
+          value: tls-certs
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].mountPath
+          value: /custom/tls
+      - equal:
+          path: spec.template.spec.volumes[5].secret.secretName
+          value: custom-worker-tls
 
   - it: should configure environment variables
     template: worker-deployment.yaml
@@ -477,27 +521,6 @@ tests:
           value: test-release-auth-storage
 
   # ============================================================================
-  # HOST NETWORK TESTS
-  # ============================================================================
-
-  - it: should not set hostNetwork by default
-    template: worker-deployment.yaml
-    asserts:
-      - isNull:
-          path: spec.template.spec.hostNetwork
-
-  - it: should set hostNetwork and dnsPolicy when hostNetwork is true
-    template: worker-deployment.yaml
-    set:
-      hostNetwork: true
-    asserts:
-      - equal:
-          path: spec.template.spec.hostNetwork
-          value: true
-      - equal:
-          path: spec.template.spec.dnsPolicy
-          value: Default
-
   # ============================================================================
   # DEPLOYMENT SPEC TESTS
   # ============================================================================
@@ -511,6 +534,8 @@ tests:
       - equal:
           path: spec.replicas
           value: 1
+      - isNull:
+          path: spec.template.spec.serviceAccountName
       - equal:
           path: spec.template.spec.automountServiceAccountToken
           value: false
@@ -520,6 +545,18 @@ tests:
       - equal:
           path: spec.selector.matchLabels["app.kubernetes.io/name"]
           value: boundary-worker
+
+  - it: should reference an existing ServiceAccount when configured
+    template: worker-deployment.yaml
+    set:
+      serviceAccount.name: existing-worker
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: existing-worker
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
 
   - it: should use values.namespace when set, overriding release namespace
     template: worker-deployment.yaml

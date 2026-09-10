@@ -16,10 +16,11 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: should not render a Route when openshift.route.proxy.enabled is false
+  - it: should render no Routes when both routes are disabled
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -36,42 +37,85 @@ tests:
   # ROUTE RENDERED ON OPENSHIFT
   # ============================================================================
 
-  - it: should render a Route when openshift.enabled and route.proxy.enabled are true
+  - it: should render proxy and ops Routes when OpenShift and both routes are enabled
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
+      openshift.route.ops.enabled: true
     asserts:
       - hasDocuments:
-          count: 1
+          count: 2
       - isAPIVersion:
           of: route.openshift.io/v1
       - isKind:
           of: Route
 
-  - it: should use passthrough TLS termination by default
+  - it: should always use passthrough TLS termination
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: spec.tls.termination
           value: passthrough
 
-  - it: should allow edge TLS termination override
+  - it: should configure the ops Route
+    release:
+      name: my-worker
     set:
       openshift.enabled: true
-      openshift.route.proxy.enabled: true
-      openshift.route.proxy.tls.termination: edge
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.host: ops.apps.cluster.example.com
+      tls.ops.disabled: false
+      openshift.route.ops.tls.termination: reencrypt
     asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: my-worker-ops-route
+      - equal:
+          path: spec.host
+          value: ops.apps.cluster.example.com
+      - equal:
+          path: spec.to.name
+          value: my-worker-ops
+      - equal:
+          path: spec.port.targetPort
+          value: ops
       - equal:
           path: spec.tls.termination
-          value: edge
+          value: reencrypt
+      - equal:
+          path: spec.tls.insecureEdgeTerminationPolicy
+          value: Redirect
+
+  - it: should configure the ops Route destination CA for reencrypt
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.tls.destinationCACertificate: |
+        -----BEGIN CERTIFICATE-----
+        example
+        -----END CERTIFICATE-----
+      tls.ops.disabled: false
+      openshift.route.ops.tls.termination: reencrypt
+    asserts:
+      - isNotNull:
+          path: spec.tls.destinationCACertificate
+      - matchRegex:
+          path: spec.tls.destinationCACertificate
+          pattern: "BEGIN CERTIFICATE"
 
   - it: should not set spec.host when host is empty
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
       openshift.route.proxy.host: ""
+      openshift.route.ops.enabled: false
     asserts:
       - isNull:
           path: spec.host
@@ -81,6 +125,7 @@ tests:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
       openshift.route.proxy.host: "boundary.apps.cluster.example.com"
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: spec.host
@@ -92,6 +137,7 @@ tests:
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: spec.to.kind
@@ -109,6 +155,7 @@ tests:
       openshift.route.proxy.enabled: true
       openshift.route.proxy.annotations:
         haproxy.router.openshift.io/timeout: "2h"
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: metadata.annotations["haproxy.router.openshift.io/timeout"]
@@ -120,6 +167,7 @@ tests:
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: metadata.namespace
@@ -129,6 +177,7 @@ tests:
     set:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: metadata.labels["app.kubernetes.io/component"]
@@ -145,6 +194,7 @@ tests:
       openshift.enabled: true
       openshift.route.proxy.enabled: true
       namespace: override-ns
+      openshift.route.ops.enabled: false
     asserts:
       - equal:
           path: metadata.namespace

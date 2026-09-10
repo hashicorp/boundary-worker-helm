@@ -1,7 +1,8 @@
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
 {{- if and .Values.openshift.enabled .Values.openshift.route.proxy.enabled }}
-# Boundary Worker OpenShift Route
+# Boundary Worker OpenShift Proxy Route
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -24,5 +25,38 @@ spec:
   port:
     targetPort: proxy
   tls:
-    termination: {{ .Values.openshift.route.proxy.tls.termination }}
+    termination: passthrough
+{{- end }}
+
+{{- if and .Values.openshift.enabled .Values.openshift.route.ops.enabled }}
+---
+# Boundary Worker OpenShift Ops Route
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "boundary.worker.ops.route.name" . }}
+  namespace: {{ include "boundary.namespace" . }}
+  labels:
+    {{- include "boundary.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.openshift.route.ops.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.openshift.route.ops.host }}
+  host: {{ .Values.openshift.route.ops.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "boundary.worker.ops.serviceName" . }}
+  port:
+    targetPort: ops
+  tls:
+    termination: {{ .Values.openshift.route.ops.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.openshift.route.ops.tls.insecureEdgeTerminationPolicy }}
+    {{- if and (not .Values.tls.ops.disabled) (eq .Values.openshift.route.ops.tls.termination "reencrypt") .Values.openshift.route.ops.tls.destinationCACertificate }}
+    destinationCACertificate: |
+      {{- .Values.openshift.route.ops.tls.destinationCACertificate | nindent 6 }}
+    {{- end }}
 {{- end }}

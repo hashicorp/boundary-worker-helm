@@ -36,7 +36,12 @@ openshift:
     proxy:
       enabled: false
       host: ""
+      annotations: {}
+    ops:
+      enabled: true
+      host: ""
       tls:
-        # passthrough keeps TLS end-to-end to the worker; use edge only if you terminate TLS at the router.
-        termination: passthrough
+        termination: reencrypt
+        insecureEdgeTerminationPolicy: Redirect
+        destinationCACertificate: ""
       annotations: {}
