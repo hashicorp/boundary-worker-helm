@@ -159,39 +159,71 @@ AUTH_FILES=$(oc exec -n "${NAMESPACE}" "${POD}" \
     -- find /var/lib/boundary -type f 2>/dev/null | wc -l | tr -d ' ') || AUTH_FILES=0
 
 if [ "${AUTH_FILES}" -gt 0 ]; then
-    pass "Worker auth storage populated (${AUTH_FILES} file(s)) — node enrollment initiated"
+pass "Worker auth storage populated (${AUTH_FILES} file(s)) — node enrollment initiated"
 else
     warn "Auth storage is empty; worker may not have started enrollment yet"
 fi
 echo ""
 
+# ── DNS: distinguish cluster DNS failure from worker registration failure ──────
+info "Checking external DNS resolution from the worker pod..."
+if oc exec -n "${NAMESPACE}" "${POD}" -- getent hosts google.com >/dev/null 2>&1; then
+    pass "Worker pod can resolve external DNS"
+else
+    warn "Worker pod cannot resolve external DNS; inspect MicroShift/CoreDNS upstream configuration"
+fi
+echo ""
+
 # ── Boundary API: confirm worker record exists (activation token consumed) ────
 info "Verifying worker record exists in Boundary (waiting up to 3m for registration)..."
+WORKER_ID_FILE="${BOUNDARY_WORKER_ID_FILE:-/tmp/boundary-worker-id.txt}"
+EXPECTED_WORKER_ID=""
+[ -f "${WORKER_ID_FILE}" ] && EXPECTED_WORKER_ID="$(tr -d '[:space:]' < "${WORKER_ID_FILE}" 2>/dev/null || true)"
+[ -n "${EXPECTED_WORKER_ID}" ] && info "Expecting worker ID: ${EXPECTED_WORKER_ID}"
+
 WORKER_ID=""
-for i in $(seq 1 36); do
+for i in $(seq 1 20); do
     WORKERS_JSON=$(boundary workers list \
         -scope-id global \
         -addr "${BOUNDARY_ADDR}" \
         -token env://BOUNDARY_TOKEN \
-        -format json 2>/dev/null || true)
-    WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" | python3 -c "
+        -format json 2>&1) || fail "Failed to list workers from Boundary:\n${WORKERS_JSON}"
+    WORKER_ID=$(printf '%s\n' "${WORKERS_JSON}" \
+        | EXPECTED_WORKER_ID="${EXPECTED_WORKER_ID}" python3 -c "
 import json, sys
+import os
+expected = os.environ.get('EXPECTED_WORKER_ID', '').strip()
 data = json.load(sys.stdin)
-for w in data.get('items', []):
-    tags = w.get('canonical_tags', {}).get('type', [])
-    if 'worker' in tags and w.get('address'):
-        print(w.get('id', ''))
-        break
-" 2>/dev/null || true)
+items = data.get('items', [])
+if expected:
+    for w in items:
+        if w.get('id') == expected and w.get('address'):
+            print(w.get('id', ''))
+            break
+else:
+    for w in items:
+        tags = w.get('canonical_tags', {}).get('type', [])
+        if 'worker' in tags and w.get('address'):
+            print(w.get('id', ''))
+            break
+" 2>/dev/null || fail "Failed to parse Boundary worker list response")
     [ -n "${WORKER_ID}" ] && break
-    info "  Worker not registered yet (attempt ${i}/36, waited $(( (i-1)*5 ))s)..."
-    sleep 5
+    sleep 3
 done
-[ -n "${WORKER_ID}" ] || fail "No worker with 'worker' tag found in Boundary after 3 minutes. Pod outbound connectivity may be broken."
+[ -n "${WORKER_ID}" ] || {
+    echo "--- Worker pod logs ---" >&2
+    oc logs -n "${NAMESPACE}" "${POD}" --tail=200 >&2 2>/dev/null || true
+    echo "--- Worker config ---" >&2
+    oc get configmap boundary-worker-config -n "${NAMESPACE}" -o jsonpath='{.data.boundary-worker\.hcl}' >&2 2>/dev/null || true
+    if [ -n "${EXPECTED_WORKER_ID}" ]; then
+        fail "Worker ${EXPECTED_WORKER_ID} did not connect to Boundary in time. Activation token may not have been consumed."
+    fi
+    fail "No worker with 'worker' tag found in Boundary. Activation token may not have been consumed."
+}
 pass "Worker record exists in Boundary: ${WORKER_ID}"
 
 # Save WORKER_ID for cleanup
-echo "${WORKER_ID}" > /tmp/boundary-worker-id.txt
+echo "${WORKER_ID}" > "${WORKER_ID_FILE}"
 echo ""
 
 # ── Log: confirm worker is reaching upstream ──────────────────────────────────

@@ -828,11 +828,15 @@ microshift-setup:
 	@echo ""
 	@# Pinned to MicroShift AIO latest as of 2025-07 — update digest when upgrading
 	@echo "Starting MicroShift AIO cluster (this may take 3-5 minutes)..."
-	@docker run -d \
+	@HOST_DNS=$$(awk '/^nameserver[[:space:]]/{print $$2; exit}' /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null); \
+		if [ -z "$$HOST_DNS" ] || printf '%s' "$$HOST_DNS" | grep -Eq '^(127\\.|::1$$)'; then HOST_DNS="8.8.8.8"; fi; \
+		echo "Using MicroShift upstream DNS: $$HOST_DNS"; \
+		docker run -d \
 		--name microshift \
 		--privileged \
 		--cgroupns=host \
 		--network host \
+		--dns "$$HOST_DNS" \
 		--tmpfs /run \
 		--tmpfs /tmp \
 		-v /sys/fs/cgroup:/sys/fs/cgroup:rw \
@@ -876,19 +880,22 @@ microshift-setup:
 		|| echo "⚠️  CNI config not found; pod networking may not work"
 	@echo "✅ CNI config file present"
 	@docker exec microshift ls -la /etc/cni/net.d/ 2>/dev/null || true
-	@echo "Ensuring pod egress NAT (10.42.0.0/16 → internet)..."
+	@echo "Ensuring pod egress NAT → internet..."
 	@sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
 	@# On Ubuntu 22.04, Docker uses iptables-nft (nftables backend) which runs BEFORE
 	@# iptables-legacy in the kernel. Docker's FORWARD=DROP lives in nftables, so rules
 	@# added only to iptables-legacy are silently bypassed. Apply to BOTH backends.
-	@for ipt in iptables iptables-nft; do \
-		sudo $$ipt -t nat -C POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE 2>/dev/null \
-			|| sudo $$ipt -t nat -I POSTROUTING 1 -s 10.42.0.0/16 ! -d 10.42.0.0/16 -j MASQUERADE 2>/dev/null \
-			|| true; \
-		sudo $$ipt -I FORWARD 1 -s 10.42.0.0/16 -j ACCEPT 2>/dev/null || true; \
-		sudo $$ipt -I FORWARD 1 -d 10.42.0.0/16 -j ACCEPT 2>/dev/null || true; \
-		sudo $$ipt -I FORWARD 1 -s 10.43.0.0/16 -j ACCEPT 2>/dev/null || true; \
-		sudo $$ipt -I FORWARD 1 -d 10.43.0.0/16 -j ACCEPT 2>/dev/null || true; \
+	POD_CIDRS=$$(kubectl get nodes -o jsonpath='{range .items[*]}{.spec.podCIDR}{"\n"}{end}' 2>/dev/null | sort -u | tr '\n' ' '); \
+	[ -n "$$POD_CIDRS" ] || POD_CIDRS="10.42.0.0/16"; \
+	echo "  Pod CIDRs: $$POD_CIDRS"; \
+	for ipt in iptables iptables-nft; do \
+		for cidr in $$POD_CIDRS; do \
+			sudo $$ipt -t nat -C POSTROUTING -s $$cidr ! -d $$cidr -j MASQUERADE 2>/dev/null \
+				|| sudo $$ipt -t nat -I POSTROUTING 1 -s $$cidr ! -d $$cidr -j MASQUERADE 2>/dev/null \
+				|| true; \
+			sudo $$ipt -I FORWARD 1 -s $$cidr -j ACCEPT 2>/dev/null || true; \
+			sudo $$ipt -I FORWARD 1 -d $$cidr -j ACCEPT 2>/dev/null || true; \
+		done; \
 	done
 	@echo "✅ Pod egress NAT + FORWARD rules applied to both iptables-legacy and iptables-nft"
 	@echo "Waiting for CoreDNS pods to be Running..."
@@ -897,6 +904,10 @@ microshift-setup:
 		get pods -n openshift-dns --no-headers 2>/dev/null | grep "dns-default" | grep -q " Running "; do sleep 5; done' \
 		|| echo "⚠️  DNS pods not yet Running; continuing"
 	@echo "✅ DNS pods ready"
+	@echo "Checking DNS resolution from the MicroShift node..."
+	@docker exec microshift getent hosts google.com >/dev/null 2>&1 \
+		&& echo "✅ MicroShift node DNS is working" \
+		|| echo "⚠️ MicroShift node DNS lookup failed; pod DNS may not resolve external names"
 	@echo "Waiting for StorageClass topolvm-provisioner..."
 	@timeout 120 bash -c \
 		'until kubectl get storageclass topolvm-provisioner >/dev/null 2>&1; do sleep 3; done' \
@@ -960,7 +971,6 @@ microshift-helm:
 		--set 'openshift.route.proxy.enabled=true' \
 		--set 'openshift.podSecurityContext.runAsUser=1001' \
 		--set 'openshift.containerSecurityContext.runAsUser=1001' \
-		--set 'hostNetwork=true' \
 		--set-file worker.config=worker.hcl \
 		--wait \
 		--timeout 8m \
