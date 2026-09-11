@@ -66,8 +66,7 @@ spec:
       
       echo ""
       echo "Checking service annotations..."
-      {{- if .Values.worker.service.proxy.enabled }}
-      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+       PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
       
       echo "Proxy service annotations:"
       PROXY_ANNOTATIONS=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations}')
@@ -85,14 +84,12 @@ spec:
           echo "⚠️  WARNING: Expected annotation not found: {{ $key }}"
         fi
         {{- end }}
-        {{- end }}
       else
         echo "ℹ️  No annotations on proxy service"
       fi
       {{- end }}
       
-      {{- if .Values.worker.service.ops.enabled }}
-      echo ""
+       echo ""
       OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
       
       echo "Ops service annotations:"
@@ -103,7 +100,6 @@ spec:
       else
         echo "ℹ️  No annotations on ops service"
       fi
-      {{- end }}
       
       echo ""
       echo "Verifying custom annotations are applied..."

@@ -1,6 +1,6 @@
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
-{{- if .Values.worker.service.proxy.enabled }}
 # Boundary Worker Proxy Service
 apiVersion: v1
 kind: Service
@@ -23,10 +23,7 @@ spec:
       name: proxy
   selector:
     {{- include "boundary.worker.selectorLabels" . | nindent 4 }}
-{{- end }}
-
 ---
-{{- if .Values.worker.service.ops.enabled }}
 # Boundary Worker Ops Service
 apiVersion: v1
 kind: Service
@@ -49,4 +46,3 @@ spec:
       name: ops
   selector:
     {{- include "boundary.worker.selectorLabels" . | nindent 4 }}
-{{- end }}

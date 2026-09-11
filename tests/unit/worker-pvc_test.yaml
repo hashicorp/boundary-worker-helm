@@ -227,6 +227,19 @@ tests:
           path: spec.storageClassName
         documentIndex: 0
 
+  - it: should set storageClassName on recording PVC when storageClass is provided
+    set:
+      worker.persistence.recording.enabled: true
+      worker.persistence.authStorage.enabled: false
+      worker.persistence.recording.storageClass: gp3-csi
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.storageClassName
+          value: gp3-csi
+        documentIndex: 0
+
   - it: should omit storageClassName for auth PVC when storageClass is empty
     set:
       worker.persistence.recording.enabled: false
@@ -237,6 +250,19 @@ tests:
           count: 1
       - notExists:
           path: spec.storageClassName
+        documentIndex: 0
+
+  - it: should set storageClassName on auth PVC when storageClass is provided
+    set:
+      worker.persistence.recording.enabled: false
+      worker.persistence.authStorage.enabled: true
+      worker.persistence.authStorage.storageClass: thin-csi
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.storageClassName
+          value: thin-csi
         documentIndex: 0
 
   # ============================================================================

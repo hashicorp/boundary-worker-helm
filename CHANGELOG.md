@@ -2,7 +2,25 @@
 
 All notable changes to the Boundary Worker Helm Chart will be documented in this file.
 
-## Unreleased
+## [0.2.0-beta] - 2026-09-15
+
+### Added
+
+- OpenShift support via `openshift.enabled` , proxy and operations Routes configurable through `openshift.route.proxy` and `openshift.route.ops`.
+- Operations listener TLS configuration through `tls.ops.disabled`, `tls.secretName`, and `tls.mountPath`, including automatic HTTPS health probes and certificate Secret mounts.
+- Operations Route support for `edge` and `reencrypt` termination, `insecureEdgeTerminationPolicy`, and an optional `destinationCACertificate`.
+- Validation that the operations listener TLS settings and certificate paths in `worker.config` agree with the chart TLS values.
+
+### Changed
+
+- Updated the chart version to `0.2.0-beta` and the default Boundary Enterprise version to `1.0.2-ent`.
+- OpenShift deployments now use OpenShift-specific pod and container security contexts.
+- Image defaults are selected by platform: `hashicorp/boundary-enterprise` on Kubernetes and `registry.connect.redhat.com/hashicorp/boundary-enterprise` with the `-ubi` tag suffix on OpenShift. Explicit `image.repository` and `image.tag` values still take precedence.
+- Proxy and operations Services are always rendered, with their types controlled by `worker.service.proxy.type` and `worker.service.ops.type`.
+
+### Removed
+
+- Chart-managed ServiceAccount creation. Set `serviceAccount.name` to use an existing ServiceAccount; otherwise the pod uses the namespace's default ServiceAccount.
 
 ## [0.1.1] - 2026-07-30
 

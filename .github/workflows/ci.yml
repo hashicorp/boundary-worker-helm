@@ -1,4 +1,4 @@
-name: Test Pipeline
+name: Helm Chart CI
 
 on:
   push:
@@ -8,6 +8,10 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
+      run_acceptance:
+        description: "Run acceptance tests"
+        type: boolean
+        default: false
       k8s_versions:
         description: "Optional explicit Kubernetes versions (comma-separated, e.g. v1.31.0,v1.30.0). Leave blank to use the K8S_MATRIX_VERSIONS repository variable."
         required: false
@@ -216,4 +220,52 @@ jobs:
       - name: Cleanup
         if: always()
         run: make acceptance-cleanup
+
+  # ---------------------------------------------------------------------------
+  # OpenShift acceptance test using MicroShift AIO — same pattern as
+  # acceptance-test uses KIND. A throwaway OCP cluster starts inside Docker on
+  # the GitHub runner. No external OCP cluster, CRC, or OCP_SERVER/OCP_TOKEN
+  # secrets are required.
+  # ---------------------------------------------------------------------------
+  openshift-acceptance-test:
+    name: OpenShift Acceptance Test (MicroShift)
+    runs-on: ubuntu-latest
+    needs: [unit-test, security]
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.base_ref == 'main' &&
+       github.event.pull_request.draft == false)
+    env:
+      BOUNDARY_ADDR: ${{ secrets.BOUNDARY_ADDR }}
+      BOUNDARY_AUTH_METHOD_ID: ${{ secrets.BOUNDARY_AUTH_METHOD_ID }}
+      BOUNDARY_CLUSTER_ID: ${{ secrets.BOUNDARY_CLUSTER_ID }}
+      BOUNDARY_LOGIN_NAME: ${{ secrets.BOUNDARY_LOGIN_NAME }}
+      BOUNDARY_PASSWORD: ${{ secrets.BOUNDARY_PASSWORD }}
+      BOUNDARY_TARGET_ID: ${{ secrets.BOUNDARY_TARGET_ID }}
+      RH_REGISTRY_USER: ${{ secrets.RH_REGISTRY_USER }}
+      RH_REGISTRY_TOKEN: ${{ secrets.RH_REGISTRY_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Helm
+        run: make setup-helm
+
+      - name: Install Boundary CLI
+        run: |
+          wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt update && sudo apt install -y boundary
+          boundary version
+
+      - name: Setup MicroShift acceptance environment
+        run: make microshift-setup
+
+      - name: Run OpenShift acceptance test
+        run: make microshift-full
+
+      - name: Cleanup
+        if: always()
+        run: make microshift-cleanup
 

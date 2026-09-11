@@ -1,4 +1,5 @@
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
 # Boundary Worker Deployment
 apiVersion: apps/v1
@@ -25,7 +26,9 @@ spec:
       labels:
         {{- include "boundary.worker.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "boundary.worker.serviceAccountName" . }}
+      {{- if .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -33,13 +36,21 @@ spec:
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext:
+        {{- if .Values.openshift.enabled }}
+        {{- toYaml .Values.openshift.podSecurityContext | nindent 8 }}
+        {{- else }}
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- end }}
       containers:
         - name: worker
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "boundary.worker.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
+            {{- if .Values.openshift.enabled }}
+            {{- toYaml .Values.openshift.containerSecurityContext | nindent 12 }}
+            {{- else }}
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom:
@@ -76,7 +87,7 @@ spec:
             httpGet:
               path: /health
               port: ops
-              scheme: {{ .Values.worker.livenessProbe.scheme }}
+              scheme: {{ include "boundary.worker.probeScheme" . }}
             initialDelaySeconds: {{ .Values.worker.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.worker.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.worker.livenessProbe.failureThreshold }}
@@ -85,7 +96,7 @@ spec:
             httpGet:
               path: /health
               port: ops
-              scheme: {{ .Values.worker.readinessProbe.scheme }}
+              scheme: {{ include "boundary.worker.probeScheme" . }}
             initialDelaySeconds: {{ .Values.worker.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.worker.readinessProbe.periodSeconds }}
             failureThreshold: {{ .Values.worker.readinessProbe.failureThreshold }}
@@ -102,9 +113,12 @@ spec:
               mountPath: /processed-config
             - name: auth-storage
               mountPath: {{ .Values.worker.persistence.authStorage.path | default "/var/lib/boundary" }}
-            {{- if .Values.worker.persistence.recording.enabled }}
             - name: recording-storage
               mountPath: {{ .Values.worker.persistence.recording.path | default "/boundary/recording" }}
+            {{- if not .Values.tls.ops.disabled }}
+            - name: tls-certs
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
             {{- end }}
       volumes:
         - name: config
@@ -126,6 +140,14 @@ spec:
         - name: recording-storage
           persistentVolumeClaim:
             claimName: {{ include "boundary.worker.recordingPvcName" . }}
+        {{- else }}
+        - name: recording-storage
+          emptyDir: {}
+        {{- end }}
+        {{- if not .Values.tls.ops.disabled }}
+        - name: tls-certs
+          secret:
+            secretName: {{ .Values.tls.secretName }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

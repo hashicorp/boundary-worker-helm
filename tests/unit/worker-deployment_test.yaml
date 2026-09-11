@@ -48,6 +48,8 @@ tests:
 
   - it: should use chart default terminationGracePeriodSeconds when not overridden
     template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: false
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
@@ -96,13 +98,25 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[4].mountPath
           value: /custom/recording
 
-  - it: should not mount recording volume when disabled
+  - it: should mount recording volume with emptyDir when disabled
     template: worker-deployment.yaml
     set:
       worker.persistence.recording.enabled: false
     asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[4].name
+          value: recording-storage
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[4].mountPath
+          value: /boundary/recording
+      - equal:
+          path: spec.template.spec.volumes[4].name
+          value: recording-storage
+      - equal:
+          path: spec.template.spec.volumes[4].emptyDir
+          value: {}
       - isNull:
-          path: spec.template.spec.containers[0].volumeMounts[4]
+          path: spec.template.spec.volumes[4].persistentVolumeClaim
 
   # ============================================================================
   # SECURITY CONTEXT TESTS
@@ -306,6 +320,9 @@ tests:
 
   - it: should configure health probes
     template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: false
+      tls.mountPath: /etc/boundary/tls
     asserts:
       - isNotNull:
           path: spec.template.spec.containers[0].livenessProbe
@@ -315,6 +332,9 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.port
           value: ops
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
           value: 10
@@ -326,6 +346,42 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.port
           value: ops
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: should use HTTP probes and omit TLS volume when ops TLS is disabled
+    template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTP
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTP
+      - isNull:
+          path: spec.template.spec.containers[0].volumeMounts[5]
+      - isNull:
+          path: spec.template.spec.volumes[5]
+
+  - it: should mount the configured TLS secret for ops TLS
+    template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: false
+      tls.secretName: custom-worker-tls
+      tls.mountPath: /custom/tls
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].name
+          value: tls-certs
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].mountPath
+          value: /custom/tls
+      - equal:
+          path: spec.template.spec.volumes[5].secret.secretName
+          value: custom-worker-tls
 
   - it: should configure environment variables
     template: worker-deployment.yaml
@@ -379,8 +435,6 @@ tests:
     template: worker-deployment.yaml
     release:
       name: test-release
-    set:
-      worker.persistence.recording.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.volumes[0].name
@@ -403,8 +457,6 @@ tests:
 
   - it: should configure volume mounts correctly
     template: worker-deployment.yaml
-    set:
-      worker.persistence.recording.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.containers[0].volumeMounts[0].name
@@ -469,6 +521,7 @@ tests:
           value: test-release-auth-storage
 
   # ============================================================================
+  # ============================================================================
   # DEPLOYMENT SPEC TESTS
   # ============================================================================
   
@@ -481,6 +534,8 @@ tests:
       - equal:
           path: spec.replicas
           value: 1
+      - isNull:
+          path: spec.template.spec.serviceAccountName
       - equal:
           path: spec.template.spec.automountServiceAccountToken
           value: false
@@ -490,6 +545,18 @@ tests:
       - equal:
           path: spec.selector.matchLabels["app.kubernetes.io/name"]
           value: boundary-worker
+
+  - it: should reference an existing ServiceAccount when configured
+    template: worker-deployment.yaml
+    set:
+      serviceAccount.name: existing-worker
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: existing-worker
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
 
   - it: should use values.namespace when set, overriding release namespace
     template: worker-deployment.yaml
@@ -583,3 +650,68 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[3].name
           value: EXTRA_VAR
+
+  # ============================================================================
+  # OPENSHIFT SECURITY CONTEXT TESTS
+  # ============================================================================
+
+  - it: should omit runAsUser and fsGroup from pod security context when openshift.enabled is true
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: true
+    asserts:
+      - isNull:
+          path: spec.template.spec.securityContext.runAsUser
+      - isNull:
+          path: spec.template.spec.securityContext.runAsGroup
+      - isNull:
+          path: spec.template.spec.securityContext.fsGroup
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+
+  - it: should retain runAsUser and fsGroup in pod security context when openshift.enabled is false
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 100
+      - equal:
+          path: spec.template.spec.securityContext.runAsGroup
+          value: 1000
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 1000
+
+  - it: should omit runAsUser and runAsGroup from container security context when openshift.enabled is true
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: true
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+      - isNull:
+          path: spec.template.spec.containers[0].securityContext.runAsGroup
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+
+  - it: should retain runAsUser in container security context when openshift.enabled is false
+    template: worker-deployment.yaml
+    set:
+      openshift.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 100
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsGroup
+          value: 1000

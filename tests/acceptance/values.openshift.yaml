@@ -1,0 +1,47 @@
+# Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
+
+worker:
+  service:
+    proxy:
+      type: ClusterIP
+      port: 9202
+      targetPort: 9202
+      annotations: {}
+    ops:
+      type: ClusterIP
+      port: 9203
+      targetPort: 9203
+      annotations: {}
+
+# ---------------------------------------------------------------------------
+# OpenShift
+# ---------------------------------------------------------------------------
+openshift:
+  enabled: true
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  route:
+    proxy:
+      enabled: false
+      host: ""
+      annotations: {}
+    ops:
+      enabled: true
+      host: ""
+      tls:
+        termination: reencrypt
+        insecureEdgeTerminationPolicy: Redirect
+        destinationCACertificate: ""
+      annotations: {}

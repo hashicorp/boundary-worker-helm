@@ -77,8 +77,7 @@ spec:
       
       echo ""
       echo "Checking Service labels..."
-      {{- if .Values.worker.service.proxy.enabled }}
-      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+       PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
       
       PROXY_LABELS=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
       echo "Proxy service labels: $PROXY_LABELS"
@@ -89,10 +88,8 @@ spec:
         echo "❌ FAILED: Proxy service missing standard labels"
         exit 1
       fi
-      {{- end }}
       
-      {{- if .Values.worker.service.ops.enabled }}
-      OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
+       OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}"
       
       OPS_LABELS=$(kubectl get service "$OPS_SERVICE" -n "$NAMESPACE" -o jsonpath='{.metadata.labels}')
       
@@ -102,7 +99,6 @@ spec:
         echo "❌ FAILED: Ops service missing standard labels"
         exit 1
       fi
-      {{- end }}
       
       echo ""
       echo "Checking ConfigMap labels..."

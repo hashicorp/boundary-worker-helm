@@ -1,6 +1,9 @@
 # Ignore VCS and CI metadata
 .git/
 .github/
+.act/
+.gitignore
+.trivyignore
 
 # Ignore local/editor artifacts
 .DS_Store
@@ -13,12 +16,22 @@
 # Ignore Helm chart archives
 *.tgz
 
-# Ignore local project-only files not needed in chart packages
+# Ignore local project-only files and acceptance overlays not needed in chart packages
 Makefile
+CONTRIBUTING.md
+CHANGELOG.md
+docs/
 kubescape-exceptions.json
 scripts/
 /tests/
+local-values.yaml
+my-values.yaml
 worker.hcl
 .env
 .terraform/
 .terraform.lock.hcl
+
+# Ignore generated validation and security scan output
+rendered.yaml
+kubescape-output.json
+trivy-output.txt

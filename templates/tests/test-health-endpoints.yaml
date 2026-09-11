@@ -61,8 +61,7 @@ spec:
       # Use service endpoints instead of pod discovery
       echo "Testing health endpoints via services..."
       
-      {{- if .Values.worker.service.ops.enabled }}
-      echo ""
+       echo ""
       echo "Testing ops service health endpoint (port 9203)..."
       OPS_SERVICE="{{ include "boundary.worker.ops.serviceName" . }}.{{ include "boundary.namespace" . }}.svc.cluster.local"
       
@@ -100,7 +99,6 @@ spec:
       done
       {{- else }}
       echo "ℹ️  Ops service is disabled - skipping health endpoint tests"
-      {{- end }}
       
       
       echo ""
