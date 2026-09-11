@@ -2,7 +2,7 @@
 
 All notable changes to the Boundary Worker Helm Chart will be documented in this file.
 
-## [0.2.0] - 2026-09-11
+## [0.2.0-beta] - 2026-09-15
 
 ### Added
 
@@ -13,7 +13,7 @@ All notable changes to the Boundary Worker Helm Chart will be documented in this
 
 ### Changed
 
-- Updated the chart version to `0.2.0` and the default Boundary Enterprise version to `1.0.2-ent`.
+- Updated the chart version to `0.2.0-beta` and the default Boundary Enterprise version to `1.0.2-ent`.
 - OpenShift deployments now use OpenShift-specific pod and container security contexts.
 - Image defaults are selected by platform: `hashicorp/boundary-enterprise` on Kubernetes and `registry.connect.redhat.com/hashicorp/boundary-enterprise` with the `-ubi` tag suffix on OpenShift. Explicit `image.repository` and `image.tag` values still take precedence.
 - Proxy and operations Services are always rendered, with their types controlled by `worker.service.proxy.type` and `worker.service.ops.type`.
