@@ -19,6 +19,21 @@ home: https://www.boundaryproject.io/
 icon: https://raw.githubusercontent.com/hashicorp/boundary/main/boundary.png
 sources:
   - https://github.com/hashicorp/boundary-worker-helm
+annotations:
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/changes: |
+    - kind: added
+      description: Add OpenShift support with configurable proxy and operations Routes, including operations Route TLS termination and destination CA support.
+    - kind: added
+      description: Add operations listener TLS configuration and TLS consistency validation.
+    - kind: changed
+      description: Always render proxy and operations Services with configurable Service types.
+    - kind: changed
+      description: Use an existing ServiceAccount when serviceAccount.name is configured.
+    - kind: changed
+      description: Updated the chart to Boundary Enterprise 1.0.2-ent.
+    - kind: removed
+      description: Remove chart-managed ServiceAccount creation.
 maintainers:
   - name: HashiCorp
     url: https://github.com/hashicorp/boundary-worker-helm
