@@ -67,21 +67,21 @@ help:
 	@echo ""
 	@echo "OpenShift Acceptance Testing targets:"
 	@echo "  make openshift-smoke-test        - Run OpenShift cluster + chart smoke test (standalone: installs+verifies+cleans up)"
-	@echo "  make openshift-helm              - Install Helm chart on an OpenShift cluster (values.openshift.yaml)"
+	@echo "  make openshift-helm              - Install Helm chart on an OpenShift cluster (tests/acceptance/values.openshift.yaml)"
 	@echo "  make openshift-acceptance-test   - Run full OpenShift acceptance test suite (chart must already be deployed)"
 	@echo "  make openshift-acceptance-full   - Full OpenShift workflow (worker-config + openshift-helm + tests)"
 	@echo "  make openshift-acceptance-cleanup - Uninstall Helm release from OpenShift"
 	@echo ""
 	@echo "OpenShift Local (CRC) Acceptance Testing targets:"
 	@echo "  make crc-setup     - Start CRC cluster and configure oc context"
-	@echo "  make crc-helm      - Install Helm chart on CRC with values.openshift.yaml"
+	@echo "  make crc-helm      - Install Helm chart on CRC with tests/acceptance/values.openshift.yaml"
 	@echo "  make crc-test      - Run full OpenShift acceptance suite against CRC"
 	@echo "  make crc-full      - Full CRC workflow (crc-setup + worker-config + crc-helm + crc-test)"
 	@echo "  make crc-cleanup   - Uninstall Helm release and stop CRC cluster"
 	@echo ""
 	@echo "OpenShift MicroShift (CI) Acceptance Testing targets:"
 	@echo "  make microshift-setup    - Start MicroShift AIO cluster in Docker (no external cluster needed)"
-	@echo "  make microshift-helm     - Install Helm chart on MicroShift with values.openshift.yaml"
+	@echo "  make microshift-helm     - Install Helm chart on MicroShift with tests/acceptance/values.openshift.yaml"
 	@echo "  make microshift-test     - Run full OpenShift acceptance suite against MicroShift"
 	@echo "  make microshift-full     - Full MicroShift workflow (setup + worker-config + helm + test)"
 	@echo "  make microshift-cleanup  - Remove MicroShift container and cleanup"
@@ -598,7 +598,7 @@ openshift-helm:
 	@echo ""
 	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
 	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
-	@echo "Installing boundary-worker chart with values.openshift.yaml..."
+	@echo "Installing boundary-worker chart with tests/acceptance/values.openshift.yaml..."
 	@EXTRA_ARGS=""; \
 	if [ -n "$${OCP_STORAGE_CLASS:-}" ]; then \
 		EXTRA_ARGS="$$EXTRA_ARGS --set worker.persistence.recording.storageClass=$${OCP_STORAGE_CLASS} --set worker.persistence.authStorage.storageClass=$${OCP_STORAGE_CLASS}"; \
@@ -618,7 +618,7 @@ openshift-helm:
 	helm upgrade --install boundary-worker . \
 		--namespace boundary \
 		--create-namespace \
-		-f values.openshift.yaml \
+		-f tests/acceptance/values.openshift.yaml \
 		--set-file worker.config=worker.hcl \
 		--wait \
 		--timeout 5m \
@@ -715,11 +715,11 @@ crc-helm:
 		echo "❌ worker.hcl not found. Run 'make worker-config' first"; \
 		exit 1; \
 	fi
-	@echo "Installing boundary-worker chart with values.openshift.yaml..."
+	@echo "Installing boundary-worker chart with tests/acceptance/values.openshift.yaml..."
 	@helm upgrade --install boundary-worker . \
 		--namespace boundary \
 		--create-namespace \
-		-f values.openshift.yaml \
+		-f tests/acceptance/values.openshift.yaml \
 		--set worker.persistence.recording.storageClass=crc-csi-hostpath-provisioner \
 		--set worker.persistence.authStorage.storageClass=crc-csi-hostpath-provisioner \
 		--set worker.resources.requests.memory=128Mi \
@@ -957,11 +957,11 @@ microshift-helm:
 	else \
 		echo "⚠️  RH_REGISTRY_USER/TOKEN not set — image pull may fail"; \
 	fi
-	@echo "Installing boundary-worker chart with values.openshift.yaml..."
+	@echo "Installing boundary-worker chart with tests/acceptance/values.openshift.yaml..."
 	@helm upgrade --install boundary-worker . \
 		--namespace boundary \
 		--create-namespace \
-		-f values.openshift.yaml \
+		-f tests/acceptance/values.openshift.yaml \
 		--set worker.persistence.recording.storageClass=topolvm-provisioner \
 		--set worker.persistence.authStorage.storageClass=topolvm-provisioner \
 		--set worker.resources.requests.memory=128Mi \

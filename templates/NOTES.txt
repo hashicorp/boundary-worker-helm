@@ -20,7 +20,7 @@ To complete the setup:
 2. Update your worker.hcl with the Route hostname as the public address, then upgrade:
    helm upgrade {{ .Release.Name }} . \
      --namespace {{ .Release.Namespace }} \
-     -f values.openshift.yaml \
+      -f <path/to/your-values.yaml> \
      --set-file worker.config="<path/to/worker.hcl>"
 {{- else }}
 1. Wait for LoadBalancer service to get external address:

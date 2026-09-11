@@ -4,6 +4,8 @@ Boundary workers are the data-plane component of Boundary. They proxy session tr
 
 This chart packages the Kubernetes resources required to run one self-managed Boundary worker in Kubernetes.
 
+For detailed installation and configuration guidance, see the [Boundary Helm chart documentation](https://developer.hashicorp.com/boundary/docs/deploy/helm-chart).
+
 ## What The Chart Deploys
 
 By default, this chart deploys:

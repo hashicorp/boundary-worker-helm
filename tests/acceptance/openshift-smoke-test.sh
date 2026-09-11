@@ -2,7 +2,7 @@
 # Copyright IBM Corp. 2026
 
 # OpenShift Worker Chart — Acceptance Smoke Test
-# Validates the Helm chart deploys correctly on OpenShift using values.openshift.yaml.
+# Validates the Helm chart deploys correctly on OpenShift using the acceptance values overlay.
 
 set -e
 
@@ -43,7 +43,7 @@ else
 fi
 echo ""
 
-# Test 2: Install chart with values.openshift.yaml (skipped if SKIP_HELM_INSTALL=true)
+# Test 2: Install chart with the OpenShift acceptance overlay (skipped if SKIP_HELM_INSTALL=true)
 if [ "${SKIP_HELM_INSTALL}" = "true" ]; then
     echo "Test 2: Verifying existing Helm release (SKIP_HELM_INSTALL=true)..."
     if helm status "${HELM_RELEASE}" -n "${NAMESPACE}" > /dev/null 2>&1; then
@@ -52,12 +52,12 @@ if [ "${SKIP_HELM_INSTALL}" = "true" ]; then
         print_result 1 "Helm release '${HELM_RELEASE}' not found. Deploy it first (e.g. make crc-helm or make openshift-helm)"
     fi
 else
-    echo "Test 2: Installing chart with values.openshift.yaml..."
+    echo "Test 2: Installing chart with the OpenShift acceptance overlay..."
     [ -f "${WORKER_HCL}" ] || { echo -e "${RED}❌ FAILED:${NC} worker.hcl not found at '${WORKER_HCL}'"; exit 1; }
     if helm upgrade --install "${HELM_RELEASE}" . \
         --namespace "${NAMESPACE}" \
         --create-namespace \
-        -f values.openshift.yaml \
+        -f tests/acceptance/values.openshift.yaml \
         --set-file worker.config="${WORKER_HCL}" \
         --wait \
         --timeout "${TIMEOUT}s" \
