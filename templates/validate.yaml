@@ -1,7 +1,9 @@
 {{- /*
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
 validate.yaml - Chart-wide validation. Produces no Kubernetes resources.
 */ -}}
 {{- include "boundary.worker.validateEnvActivationTokenRef" . -}}
+{{- include "boundary.worker.validateConfig" . -}}
 {{- include "boundary.worker.validateSecretRefs" . -}}

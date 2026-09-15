@@ -99,8 +99,7 @@ spec:
       echo ""
       echo "=== Phase 2: Service Routing ==="
       
-      {{- if .Values.worker.service.proxy.enabled }}
-      PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
+       PROXY_SERVICE="{{ include "boundary.worker.proxy.serviceName" . }}"
       PROXY_SERVICE_IP=$(kubectl get service "$PROXY_SERVICE" -n "$NAMESPACE" -o jsonpath='{.spec.clusterIP}')
       
       echo "Testing service routing to worker..."
@@ -109,7 +108,6 @@ spec:
       else
         echo "⚠️  WARNING: Service routing may have issues"
       fi
-      {{- end }}
       
       echo ""
       echo "=== Phase 3: Worker Process Health ==="

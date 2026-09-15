@@ -11,7 +11,16 @@ tests:
 
   - it: renders no validation output when activation token is inline and no secretRefs configured
     set:
+      tls.ops.disabled: false
+      tls.mountPath: /etc/boundary/tls
       worker.config: |
+        listener "tcp" {
+          address = "0.0.0.0:9203"
+          purpose = "ops"
+          tls_disable = false
+          tls_cert_file = "/etc/boundary/tls/tls.crt"
+          tls_key_file = "/etc/boundary/tls/tls.key"
+        }
         worker {
           controller_generated_activation_token = "plain-inline-token"
         }
@@ -21,7 +30,16 @@ tests:
 
   - it: fails when secretRefs.secretName is set and activation token is hardcoded inline
     set:
+      tls.ops.disabled: false
+      tls.mountPath: /etc/boundary/tls
       worker.config: |
+        listener "tcp" {
+          address = "0.0.0.0:9203"
+          purpose = "ops"
+          tls_disable = false
+          tls_cert_file = "/etc/boundary/tls/tls.crt"
+          tls_key_file = "/etc/boundary/tls/tls.key"
+        }
         worker {
           controller_generated_activation_token = "plain-inline-token"
         }
@@ -33,7 +51,16 @@ tests:
 
   - it: fails when secretRefs.validateExisting is true and the referenced secret does not exist for env-backed activation tokens
     set:
+      tls.ops.disabled: false
+      tls.mountPath: /etc/boundary/tls
       worker.config: |
+        listener "tcp" {
+          address = "0.0.0.0:9203"
+          purpose = "ops"
+          tls_disable = false
+          tls_cert_file = "/etc/boundary/tls/tls.crt"
+          tls_key_file = "/etc/boundary/tls/tls.key"
+        }
         worker {
           controller_generated_activation_token = "env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN"
         }
@@ -43,3 +70,31 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "Secret \"does-not-exist\" not found"
+
+  - it: fails when config disables ops TLS but tls.ops.disabled is false
+    set:
+      tls.ops.disabled: false
+      worker.config: |
+        listener "tcp" {
+          address = "0.0.0.0:9203"
+          purpose = "ops"
+          tls_disable = true
+          tls_cert_file = "/etc/boundary/tls/tls.crt"
+          tls_key_file = "/etc/boundary/tls/tls.key"
+        }
+    asserts:
+      - failedTemplate:
+          errorPattern: "worker.config ops listener has tls_disable=true but tls.ops.disabled=false"
+
+  - it: fails when tls.ops.disabled is true but config enables ops TLS
+    set:
+      tls.ops.disabled: true
+      worker.config: |
+        listener "tcp" {
+          address = "0.0.0.0:9203"
+          purpose = "ops"
+          tls_disable = false
+        }
+    asserts:
+      - failedTemplate:
+          errorPattern: "worker.config ops listener has tls_disable=false but tls.ops.disabled=true"

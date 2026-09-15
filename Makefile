@@ -1,4 +1,5 @@
 # Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 
 # Auto-load .env if present (strips 'export ' prefix for Make compatibility)
 ifneq (,$(wildcard .env))
@@ -16,8 +17,11 @@ export K8S_MATRIX_VERSIONS
 # ================================
 .PHONY: help format deps clean lint test unit-test worker-config
 .PHONY: setup-helm setup-kubeconform setup-trivy setup-kubescape setup-helm-unittest lint-helm-k8s trivy-scan kubescape-scan
-.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup
+.PHONY: acceptance-setup acceptance-cluster acceptance-helm acceptance-test acceptance-full acceptance-cleanup acceptance-all
 .PHONY: k8s-matrix-test k8s-matrix-cleanup
+.PHONY: openshift-smoke-test openshift-helm openshift-acceptance-test openshift-acceptance-full openshift-acceptance-cleanup
+.PHONY: crc-setup crc-helm crc-test crc-full crc-cleanup
+.PHONY: microshift-setup microshift-helm microshift-test microshift-full microshift-cleanup
 .PHONY: eks-setup eks-helm eks-test eks-full eks-cleanup
 .PHONY: tf-setup tf-destroy tf-output tf-plan
 .PHONY: aks-setup aks-helm aks-test aks-full aks-cleanup
@@ -57,8 +61,30 @@ help:
 	@echo "  make acceptance-test    - Run acceptance tests"
 	@echo "  make acceptance-full    - Run full acceptance workflow (setup + worker-config + helm + tests)"
 	@echo "  make acceptance-cleanup    - Delete acceptance cluster"
+	@echo "  make acceptance-all        - Run BOTH Kubernetes (KIND) and OpenShift (CRC) acceptance tests"
 	@echo "  make k8s-matrix-test       - Run tcp-target-conn-test.sh across kindest/node K8s versions (set K8S_MATRIX_VERSIONS or K8S_VERSIONS)"
 	@echo "  make k8s-matrix-cleanup    - Delete the acceptance cluster and generated worker config"
+	@echo ""
+	@echo "OpenShift Acceptance Testing targets:"
+	@echo "  make openshift-smoke-test        - Run OpenShift cluster + chart smoke test (standalone: installs+verifies+cleans up)"
+	@echo "  make openshift-helm              - Install Helm chart on an OpenShift cluster (tests/acceptance/values.openshift.yaml)"
+	@echo "  make openshift-acceptance-test   - Run full OpenShift acceptance test suite (chart must already be deployed)"
+	@echo "  make openshift-acceptance-full   - Full OpenShift workflow (worker-config + openshift-helm + tests)"
+	@echo "  make openshift-acceptance-cleanup - Uninstall Helm release from OpenShift"
+	@echo ""
+	@echo "OpenShift Local (CRC) Acceptance Testing targets:"
+	@echo "  make crc-setup     - Start CRC cluster and configure oc context"
+	@echo "  make crc-helm      - Install Helm chart on CRC with tests/acceptance/values.openshift.yaml"
+	@echo "  make crc-test      - Run full OpenShift acceptance suite against CRC"
+	@echo "  make crc-full      - Full CRC workflow (crc-setup + worker-config + crc-helm + crc-test)"
+	@echo "  make crc-cleanup   - Uninstall Helm release and stop CRC cluster"
+	@echo ""
+	@echo "OpenShift MicroShift (CI) Acceptance Testing targets:"
+	@echo "  make microshift-setup    - Start MicroShift AIO cluster in Docker (no external cluster needed)"
+	@echo "  make microshift-helm     - Install Helm chart on MicroShift with tests/acceptance/values.openshift.yaml"
+	@echo "  make microshift-test     - Run full OpenShift acceptance suite against MicroShift"
+	@echo "  make microshift-full     - Full MicroShift workflow (setup + worker-config + helm + test)"
+	@echo "  make microshift-cleanup  - Remove MicroShift container and cleanup"
 	@echo ""
 	@echo "AWS EKS Acceptance Testing targets (shell-based, legacy):"
 	@echo "  make eks-setup             - Provision EKS cluster via Terraform (tf-setup)"
@@ -549,6 +575,477 @@ acceptance-test:
 	@echo "✅ All acceptance tests passed!"
 	@echo ""
 
+# ================================
+# OpenShift Acceptance Testing Targets
+# ================================
+
+openshift-smoke-test:
+	@echo "================================"
+	@echo "OpenShift Worker Chart Smoke Test"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: oc login <cluster-url>"; exit 1)
+	@if [ ! -f worker.hcl ]; then \
+		echo "❌ worker.hcl not found. Run 'make worker-config' first"; \
+		exit 1; \
+	fi
+	@bash tests/acceptance/openshift-smoke-test.sh
+
+openshift-helm:
+	@echo "============================================"
+	@echo "Installing Helm Chart on OpenShift"
+	@echo "============================================"
+	@echo ""
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@echo "Installing boundary-worker chart with tests/acceptance/values.openshift.yaml..."
+	@EXTRA_ARGS=""; \
+	if [ -n "$${OCP_STORAGE_CLASS:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.persistence.recording.storageClass=$${OCP_STORAGE_CLASS} --set worker.persistence.authStorage.storageClass=$${OCP_STORAGE_CLASS}"; \
+	fi; \
+	if [ -n "$${OCP_MEM_REQUEST:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.requests.memory=$${OCP_MEM_REQUEST}"; \
+	fi; \
+	if [ -n "$${OCP_CPU_REQUEST:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.requests.cpu=$${OCP_CPU_REQUEST}"; \
+	fi; \
+	if [ -n "$${OCP_MEM_LIMIT:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.limits.memory=$${OCP_MEM_LIMIT}"; \
+	fi; \
+	if [ -n "$${OCP_CPU_LIMIT:-}" ]; then \
+		EXTRA_ARGS="$$EXTRA_ARGS --set worker.resources.limits.cpu=$${OCP_CPU_LIMIT}"; \
+	fi; \
+	helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		-f tests/acceptance/values.openshift.yaml \
+		--set-file worker.config=worker.hcl \
+		--wait \
+		--timeout 5m \
+		$$EXTRA_ARGS
+	@echo "✅ Helm chart installed on OpenShift"
+	@echo ""
+	@oc get all -n boundary
+
+openshift-acceptance-test:
+	@echo "================================"
+	@echo "OpenShift Acceptance Test Suite"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: oc login <cluster-url>"; exit 1)
+	@SKIP_HELM_INSTALL=true bash tests/acceptance/openshift-smoke-test.sh
+	@bash tests/acceptance/openshift-tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
+	@echo "✅ All OpenShift acceptance tests passed!"
+	@echo ""
+
+openshift-acceptance-full:
+	@echo "================================"
+	@echo "Running Full OpenShift Acceptance Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) worker-config
+	@$(MAKE) openshift-helm
+	@$(MAKE) openshift-acceptance-test
+	@echo ""
+	@echo "To cleanup, run: make openshift-acceptance-cleanup"
+	@echo ""
+
+openshift-acceptance-cleanup:
+	@echo "================================"
+	@echo "Cleaning up OpenShift Acceptance"
+	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
+	@echo "Uninstalling Helm release..."
+	@helm uninstall boundary-worker --namespace boundary 2>/dev/null && echo "✅ Helm release uninstalled" || echo "⚠️  Helm release not found"
+	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo "✅ OpenShift acceptance cleanup complete"
+
+# ================================
+# OpenShift Local (CRC) Targets
+# ================================
+# Run acceptance tests against a local OpenShift cluster using CRC (OpenShift Local).
+# Requires CRC installed and running on your machine: https://developers.redhat.com/products/openshift-local
+#
+# Usage:
+#   make crc-full      – full workflow (setup → worker-config → install → test)
+#   make crc-setup     – start CRC and configure oc context
+#   make crc-helm      – install the Helm chart on CRC
+#   make crc-test      – run the OpenShift acceptance suite against CRC
+#   make crc-cleanup   – uninstall and stop CRC
+# ================================
+
+crc-setup:
+	@echo "================================"
+	@echo "Setting up CRC (OpenShift Local)"
+	@echo "================================"
+	@echo ""
+	@command -v crc >/dev/null 2>&1 || (echo "❌ crc not installed. Download from: https://developers.redhat.com/products/openshift-local"; exit 1)
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: eval $$(crc oc-env)"; exit 1)
+	@echo "✅ crc and oc are installed"
+	@echo ""
+	@echo "Starting CRC cluster (this may take several minutes)..."
+	@crc start
+	@echo ""
+	@echo "Configuring oc context..."
+	@eval $$(crc oc-env) && \
+		KUBEADMIN_PASS=$$(crc console --credentials 2>/dev/null | grep 'kubeadmin' | sed 's/.*-p \([^ ]*\) .*/\1/') && \
+		oc login -u kubeadmin -p "$$KUBEADMIN_PASS" \
+			--insecure-skip-tls-verify=true \
+			https://api.crc.testing:6443
+	@oc cluster-info
+	@echo "✅ CRC cluster is ready"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - Generate worker config: make worker-config"
+	@echo "  - Install Helm chart:     make crc-helm"
+	@echo "  - Run tests:              make crc-test"
+	@echo "  - Full workflow:          make crc-full"
+
+crc-helm:
+	@echo "============================================"
+	@echo "Installing Helm Chart on CRC"
+	@echo "============================================"
+	@echo ""
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
+	@if [ ! -f worker.hcl ]; then \
+		echo "❌ worker.hcl not found. Run 'make worker-config' first"; \
+		exit 1; \
+	fi
+	@echo "Installing boundary-worker chart with tests/acceptance/values.openshift.yaml..."
+	@helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		-f tests/acceptance/values.openshift.yaml \
+		--set worker.persistence.recording.storageClass=crc-csi-hostpath-provisioner \
+		--set worker.persistence.authStorage.storageClass=crc-csi-hostpath-provisioner \
+		--set worker.resources.requests.memory=128Mi \
+		--set worker.resources.requests.cpu=50m \
+		--set worker.resources.limits.memory=512Mi \
+		--set worker.resources.limits.cpu=200m \
+		--set-file worker.config=worker.hcl \
+		--wait \
+		--timeout 5m
+	@echo "✅ Helm chart installed successfully"
+	@echo ""
+	@echo "Deployed resources:"
+	@oc get all -n boundary
+	@echo ""
+	@echo "Waiting for deployment to be ready..."
+	@oc wait --for=condition=available --timeout=5m \
+		deployment/boundary-worker-deployment \
+		-n boundary
+	@echo "✅ Deployment is ready"
+
+crc-test:
+	@echo "================================"
+	@echo "CRC OpenShift Acceptance Tests"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found. Run: eval $$(crc oc-env)"; exit 1)
+	@SKIP_HELM_INSTALL=true bash tests/acceptance/openshift-smoke-test.sh
+	@bash tests/acceptance/openshift-tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
+	@echo "✅ All CRC acceptance tests passed!"
+	@echo ""
+
+crc-full:
+	@echo "================================"
+	@echo "Running Full CRC Workflow"
+	@echo "================================"
+	@echo ""
+	@$(MAKE) crc-setup
+	@$(MAKE) worker-config
+	@$(MAKE) crc-helm
+	@$(MAKE) crc-test
+	@echo ""
+	@echo "To cleanup, run: make crc-cleanup"
+	@echo ""
+
+crc-cleanup:
+	@echo "================================"
+	@echo "Cleaning up CRC"
+	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
+	@echo "Uninstalling Helm release..."
+	@helm uninstall boundary-worker --namespace boundary 2>/dev/null && echo "✅ Helm release uninstalled" || echo "⚠️  Helm release not found"
+	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo ""
+	@echo "Stopping CRC cluster..."
+	@crc stop && echo "✅ CRC cluster stopped" || echo "⚠️  CRC stop failed"
+	@echo "✅ CRC cleanup complete"
+
+# ================================
+# OpenShift MicroShift (CI) Targets
+# ================================
+# Runs a throwaway MicroShift AIO cluster inside Docker — the same
+# pattern KIND uses for Kubernetes acceptance tests.
+# No external OCP cluster, CRC, or OCP_SERVER/OCP_TOKEN secrets are needed.
+
+microshift-setup:
+	@echo "================================"
+	@echo "Setting up MicroShift (OpenShift CI)"
+	@echo "================================"
+	@echo ""
+	@echo "Checking dependencies..."
+	@command -v docker >/dev/null 2>&1 || (echo "❌ docker is not installed"; exit 1)
+	@echo "✅ docker is installed"
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found. Run 'make setup-helm' first"; exit 1)
+	@echo "✅ helm is installed"
+	@if ! command -v oc >/dev/null 2>&1; then \
+		echo "Installing oc CLI..."; \
+		curl -Lo /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz; \
+		sudo tar -xzf /tmp/oc.tar.gz -C /usr/local/bin oc; \
+		rm -f /tmp/oc.tar.gz; \
+	fi
+	@echo "✅ oc CLI is installed ($$(oc version --client 2>/dev/null | head -n1))"
+	@echo ""
+	@echo "Creating storage loop device and LVM volume group for MicroShift (4 GB)..."
+	@sudo truncate -s 4G /tmp/microshift-disk.img
+	@LOOP=$$(sudo losetup --find --show /tmp/microshift-disk.img) && \
+		echo "$$LOOP" > /tmp/microshift-loop-device && \
+		echo "✅ Loop device: $$LOOP"
+	@sudo apt-get install -y --quiet lvm2 2>/dev/null || true
+	@LOOP_DEV=$$(cat /tmp/microshift-loop-device) && \
+		sudo pvcreate "$$LOOP_DEV" && \
+		sudo vgcreate rhel "$$LOOP_DEV" && \
+		echo "✅ LVM volume group 'rhel' created on $$LOOP_DEV"
+	@echo "Configuring iptables-legacy (required for MicroShift networking on Ubuntu)..."
+	@sudo apt-get install -y --quiet iptables 2>/dev/null || true
+	@sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
+	@sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true
+	@echo "✅ iptables-legacy configured"
+	@echo ""
+	@echo "Configuring CRI-O storage driver (vfs required for overlay-on-overlay CI environments)..."
+	@printf '[storage]\ndriver = "vfs"\ngraphroot = "/var/lib/containers/storage"\nrunroot = "/run/containers/storage"\n' > /tmp/microshift-storage.conf
+	@echo "✅ CRI-O storage config created (vfs)"
+	@echo ""
+	@# Pinned to MicroShift AIO latest as of 2025-07 — update digest when upgrading
+	@echo "Starting MicroShift AIO cluster (this may take 3-5 minutes)..."
+	@HOST_DNS=$$(awk '/^nameserver[[:space:]]/{print $$2; exit}' /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null); \
+		if [ -z "$$HOST_DNS" ] || printf '%s' "$$HOST_DNS" | grep -Eq '^(127\\.|::1$$)'; then HOST_DNS="8.8.8.8"; fi; \
+		echo "Using MicroShift upstream DNS: $$HOST_DNS"; \
+		docker run -d \
+		--name microshift \
+		--privileged \
+		--cgroupns=host \
+		--network host \
+		--dns "$$HOST_DNS" \
+		--tmpfs /run \
+		--tmpfs /tmp \
+		-v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+		-v /lib/modules:/lib/modules:ro \
+		-v /tmp/microshift-storage.conf:/etc/containers/storage.conf:ro \
+		-v microshift-data:/var/lib/microshift \
+		quay.io/microshift/microshift-aio@sha256:e5c53f97b43a042e4bdceeccf980bcdf8630ece81cb75f8fd11d7d8564edc832
+	@echo "Waiting for MicroShift node to be Ready (up to 10 minutes)..."
+	@i=0; while [ $$i -lt 120 ]; do \
+		if docker exec microshift kubectl \
+			--kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig \
+			get nodes --no-headers 2>/dev/null | grep -q ' Ready'; then \
+			echo "✅ MicroShift node is Ready"; break; \
+		fi; \
+		if [ $$(( $$i % 6 )) -eq 0 ]; then \
+			echo "  Container status: $$(docker inspect microshift --format '{{.State.Status}}' 2>/dev/null)"; \
+			echo "  Service status: microshift=$$(docker exec microshift systemctl is-active microshift 2>/dev/null) crio=$$(docker exec microshift systemctl is-active crio 2>/dev/null)"; \
+			docker exec microshift journalctl -u microshift --no-pager --lines=3 2>/dev/null || true; \
+		fi; \
+		echo "  waiting... ($$(( $$i * 5 ))s)"; \
+		sleep 5; i=$$(( $$i + 1 )); \
+		if [ $$i -eq 120 ]; then \
+			echo "❌ MicroShift node never became Ready after 10 minutes."; \
+			echo "--- systemctl status ---"; \
+			docker exec microshift systemctl status microshift crio --no-pager 2>/dev/null || true; \
+			echo "--- MicroShift journal ---"; \
+			docker exec microshift journalctl -u microshift --no-pager --lines=50 2>/dev/null || true; \
+			echo "--- CRI-O journal ---"; \
+			docker exec microshift journalctl -u crio --no-pager --lines=30 2>/dev/null || true; \
+			exit 1; \
+		fi; \
+	done
+	@echo ""
+	@echo "Configuring kubeconfig..."
+	@mkdir -p ~/.kube
+	@docker cp microshift:/var/lib/microshift/resources/kubeadmin/kubeconfig ~/.kube/config
+	@echo "✅ Kubeconfig configured"
+	@echo "Waiting for CNI config file in /etc/cni/net.d/..."
+	@timeout 300 bash -c \
+		'until docker exec microshift ls /etc/cni/net.d/ 2>/dev/null | grep -qE "\.conf|\.conflist"; do sleep 5; done' \
+		|| echo "⚠️  CNI config not found; pod networking may not work"
+	@echo "✅ CNI config file present"
+	@docker exec microshift ls -la /etc/cni/net.d/ 2>/dev/null || true
+	@echo "Ensuring pod egress NAT → internet..."
+	@sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+	@# On Ubuntu 22.04, Docker uses iptables-nft (nftables backend) which runs BEFORE
+	@# iptables-legacy in the kernel. Docker's FORWARD=DROP lives in nftables, so rules
+	@# added only to iptables-legacy are silently bypassed. Apply to BOTH backends.
+	POD_CIDRS=$$(kubectl get nodes -o jsonpath='{range .items[*]}{.spec.podCIDR}{"\n"}{end}' 2>/dev/null | sort -u | tr '\n' ' '); \
+	[ -n "$$POD_CIDRS" ] || POD_CIDRS="10.42.0.0/16"; \
+	echo "  Pod CIDRs: $$POD_CIDRS"; \
+	for ipt in iptables iptables-nft; do \
+		for cidr in $$POD_CIDRS; do \
+			sudo $$ipt -t nat -C POSTROUTING -s $$cidr ! -d $$cidr -j MASQUERADE 2>/dev/null \
+				|| sudo $$ipt -t nat -I POSTROUTING 1 -s $$cidr ! -d $$cidr -j MASQUERADE 2>/dev/null \
+				|| true; \
+			sudo $$ipt -I FORWARD 1 -s $$cidr -j ACCEPT 2>/dev/null || true; \
+			sudo $$ipt -I FORWARD 1 -d $$cidr -j ACCEPT 2>/dev/null || true; \
+		done; \
+	done
+	@echo "✅ Pod egress NAT + FORWARD rules applied to both iptables-legacy and iptables-nft"
+	@echo "Waiting for CoreDNS pods to be Running..."
+	@timeout 180 bash -c \
+		'until docker exec microshift kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig \
+		get pods -n openshift-dns --no-headers 2>/dev/null | grep "dns-default" | grep -q " Running "; do sleep 5; done' \
+		|| echo "⚠️  DNS pods not yet Running; continuing"
+	@echo "✅ DNS pods ready"
+	@echo "Checking DNS resolution from the MicroShift node..."
+	@docker exec microshift getent hosts google.com >/dev/null 2>&1 \
+		&& echo "✅ MicroShift node DNS is working" \
+		|| echo "⚠️ MicroShift node DNS lookup failed; pod DNS may not resolve external names"
+	@echo "Waiting for StorageClass topolvm-provisioner..."
+	@timeout 120 bash -c \
+		'until kubectl get storageclass topolvm-provisioner >/dev/null 2>&1; do sleep 3; done' \
+		|| echo "⚠️  topolvm-provisioner not yet available; continuing"
+	@kubectl cluster-info || true
+	@echo "✅ MicroShift cluster is ready"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - Generate worker config: make worker-config"
+	@echo "  - Install Helm chart:     make microshift-helm"
+	@echo "  - Run tests:              make microshift-test"
+	@echo "  - Full workflow:          make microshift-full"
+
+microshift-helm:
+	@echo "============================================"
+	@echo "Installing Helm Chart on MicroShift"
+	@echo "============================================"
+	@echo ""
+	@command -v helm >/dev/null 2>&1 || (echo "❌ Helm not found"; exit 1)
+	@[ -f worker.hcl ] || { echo "❌ worker.hcl not found. Run 'make worker-config' first"; exit 1; }
+	@echo "Injecting Red Hat registry credentials into MicroShift CRI-O..."
+	@if [ -n "$${RH_REGISTRY_USER:-}" ] && [ -n "$${RH_REGISTRY_TOKEN:-}" ]; then \
+		AUTH_B64=$$(printf '%s:%s' "$${RH_REGISTRY_USER}" "$${RH_REGISTRY_TOKEN}" | base64 -w0); \
+		printf '{"auths":{"registry.connect.redhat.com":{"auth":"%s"}}}\n' "$${AUTH_B64}" > /tmp/rh-auth.json; \
+		docker exec microshift mkdir -p /etc/containers; \
+		docker cp /tmp/rh-auth.json microshift:/etc/containers/auth.json; \
+		rm -f /tmp/rh-auth.json; \
+		echo "✅ CRI-O auth configured for registry.connect.redhat.com"; \
+		echo "Pre-pulling boundary-enterprise image into CRI-O cache (up to 3 attempts)..."; \
+		CHART_APP_VERSION=$$(grep '^appVersion:' Chart.yaml | sed 's/appVersion: *//;s/"//g'); \
+		PULL_IMAGE="registry.connect.redhat.com/hashicorp/boundary-enterprise:$${CHART_APP_VERSION}-ubi"; \
+		PULL_OK=0; \
+		for attempt in 1 2 3; do \
+			echo "  attempt $$attempt/3..."; \
+			if docker exec microshift \
+				crictl pull \
+				--creds "$${RH_REGISTRY_USER}:$${RH_REGISTRY_TOKEN}" \
+				"$$PULL_IMAGE"; then \
+				PULL_OK=1; break; \
+			fi; \
+			echo "  pull attempt $$attempt failed, retrying in 10s..."; \
+			sleep 10; \
+		done; \
+		[ "$$PULL_OK" = "1" ] \
+			&& echo "✅ Image pre-pulled into CRI-O: $$PULL_IMAGE" \
+			|| { echo "❌ crictl pull failed after 3 attempts — check RH_REGISTRY_USER/RH_REGISTRY_TOKEN"; exit 1; }; \
+	else \
+		echo "⚠️  RH_REGISTRY_USER/TOKEN not set — image pull may fail"; \
+	fi
+	@echo "Installing boundary-worker chart with tests/acceptance/values.openshift.yaml..."
+	@helm upgrade --install boundary-worker . \
+		--namespace boundary \
+		--create-namespace \
+		-f tests/acceptance/values.openshift.yaml \
+		--set worker.persistence.recording.storageClass=topolvm-provisioner \
+		--set worker.persistence.authStorage.storageClass=topolvm-provisioner \
+		--set worker.resources.requests.memory=128Mi \
+		--set worker.resources.requests.cpu=50m \
+		--set worker.resources.limits.memory=512Mi \
+		--set worker.resources.limits.cpu=200m \
+		--set 'openshift.route.proxy.enabled=true' \
+		--set 'openshift.podSecurityContext.runAsUser=1001' \
+		--set 'openshift.containerSecurityContext.runAsUser=1001' \
+		--set-file worker.config=worker.hcl \
+		--wait \
+		--timeout 8m \
+		|| { \
+			echo "❌ Helm install timed out or failed. Diagnostics:"; \
+			echo "--- Pod list ---"; \
+			kubectl get pods -n boundary -o wide 2>/dev/null || true; \
+			echo "--- Pod events ---"; \
+			kubectl get events -n boundary --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || true; \
+			echo "--- Pod describe ---"; \
+			kubectl describe pods -n boundary 2>/dev/null | tail -40 || true; \
+			echo "--- CRI-O journal (last 30 lines) ---"; \
+			docker exec microshift journalctl -u crio --no-pager --lines=30 2>/dev/null || true; \
+			exit 1; \
+		}
+	@echo "✅ Helm chart installed on MicroShift"
+	@echo ""
+	@oc get all -n boundary
+
+microshift-test:
+	@echo "================================"
+	@echo "MicroShift OpenShift Acceptance Tests"
+	@echo "================================"
+	@echo ""
+	@command -v oc >/dev/null 2>&1 || (echo "❌ oc CLI not found"; exit 1)
+	@SKIP_HELM_INSTALL=true bash tests/acceptance/openshift-smoke-test.sh
+	@bash tests/acceptance/openshift-tcp-target-conn-test.sh
+	@bash tests/acceptance/cleanup-worker.sh
+	@echo "✅ All MicroShift acceptance tests passed!"
+	@echo ""
+
+microshift-full:
+	@echo "================================"
+	@echo "Running Full MicroShift Acceptance Workflow"
+	@echo "================================"
+	@echo ""
+	@if docker inspect microshift >/dev/null 2>&1; then \
+		echo "⚠️  MicroShift container already exists — skipping microshift-setup"; \
+	else \
+		$(MAKE) microshift-setup; \
+	fi
+	@$(MAKE) worker-config
+	@$(MAKE) microshift-helm
+	@$(MAKE) microshift-test
+	@echo ""
+	@echo "To cleanup, run: make microshift-cleanup"
+	@echo ""
+
+microshift-cleanup:
+	@echo "================================"
+	@echo "Cleaning up MicroShift"
+	@echo "================================"
+	@echo "Cleaning up worker from Boundary cluster..."
+	@bash tests/acceptance/cleanup-worker.sh || true
+	@echo ""
+	@echo "Uninstalling Helm release..."
+	@helm uninstall boundary-worker --namespace boundary 2>/dev/null && echo "✅ Helm release uninstalled" || echo "⚠️  Helm release not found"
+	@rm -f worker.hcl
+	@rm -f /tmp/boundary-worker-id.txt
+	@echo ""
+	@echo "Stopping and removing MicroShift container..."
+	@docker stop microshift 2>/dev/null && docker rm microshift 2>/dev/null \
+		&& echo "✅ MicroShift container removed" || echo "⚠️  MicroShift container not found"
+	@docker volume rm microshift-data 2>/dev/null || true
+	@echo "Removing loop device, LVM and disk image..."
+	@if [ -f /tmp/microshift-loop-device ]; then \
+		LOOP_DEV=$$(cat /tmp/microshift-loop-device); \
+		sudo vgremove -f rhel 2>/dev/null || true; \
+		sudo pvremove -f "$$LOOP_DEV" 2>/dev/null || true; \
+		sudo losetup -d "$$LOOP_DEV" 2>/dev/null || true; \
+		rm -f /tmp/microshift-loop-device; \
+	fi
+	@sudo rm -f /tmp/microshift-disk.img
+	@echo "✅ MicroShift cleanup complete"
+
 
 # Note: acceptance-full does NOT run the Kubernetes version matrix test.
 # The matrix manages its own cluster lifecycle (it deletes/recreates the
@@ -569,6 +1066,20 @@ acceptance-full:
 	@$(MAKE) acceptance-test
 	@echo ""
 	@echo "To cleanup, run: make acceptance-cleanup"
+	@echo ""
+
+acceptance-all:
+	@echo "=================================================="
+	@echo "Running Full Acceptance Suite (Kubernetes + OpenShift)"
+	@echo "=================================================="
+	@echo ""
+	@echo "--- Phase 1: Kubernetes (KIND) Acceptance Tests ---"
+	@$(MAKE) acceptance-full
+	@echo ""
+	@echo "--- Phase 2: OpenShift (MicroShift) Acceptance Tests ---"
+	@$(MAKE) microshift-full
+	@echo ""
+	@echo "✅ All acceptance tests passed (Kubernetes + OpenShift)!"
 	@echo ""
 
 # ================================

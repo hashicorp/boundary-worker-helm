@@ -1,5 +1,6 @@
 {{- /*
 Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MPL-2.0
 */ -}}
 
 {{/*
@@ -171,6 +172,17 @@ limits:
 {{- end }}
 
 {{/*
+Get the OpenShift Route name for the worker proxy port
+*/}}
+{{- define "boundary.worker.route.name" -}}
+{{- printf "%s-proxy-route" (include "boundary.fullname" .) }}
+{{- end }}
+
+{{- define "boundary.worker.ops.route.name" -}}
+{{- printf "%s-ops-route" (include "boundary.fullname" .) }}
+{{- end }}
+
+{{/*
 Get the service account name for the worker
 */}}
 {{- define "boundary.worker.serviceAccountName" -}}
@@ -179,6 +191,52 @@ Get the service account name for the worker
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
+{{- end }}
+
+{{/*
+Resolve the HTTP probe scheme from the ops listener TLS setting.
+*/}}
+{{- define "boundary.worker.probeScheme" -}}
+{{- if .Values.tls.ops.disabled -}}
+HTTP
+{{- else -}}
+HTTPS
+{{- end -}}
+{{- end }}
+
+{{/*
+Build the worker image reference.
+
+Repository resolution order (first non-empty wins):
+  1. .Values.image.repository  — explicit operator override
+  2. openshift.enabled=true    → registry.connect.redhat.com/hashicorp/boundary-enterprise
+  3. default                   → hashicorp/boundary-enterprise
+
+Tag resolution:
+  - Explicit .Values.image.tag always wins as-is.
+  - When tag is empty and openshift.enabled=true, appends "-ubi" to Chart.AppVersion
+    because the Red Hat registry uses the "<version>-ubi" tag convention
+    (e.g. 1.0.1-ent-ubi) while Docker Hub uses "<version>" (e.g. 1.0.1-ent).
+  - When tag is empty and openshift.enabled=false, uses Chart.AppVersion directly.
+*/}}
+{{- define "boundary.worker.image" -}}
+{{- $repo := .Values.image.repository -}}
+{{- if not $repo -}}
+  {{- if .Values.openshift.enabled -}}
+    {{- $repo = "registry.connect.redhat.com/hashicorp/boundary-enterprise" -}}
+  {{- else -}}
+    {{- $repo = "hashicorp/boundary-enterprise" -}}
+  {{- end -}}
+{{- end -}}
+{{- $tag := .Values.image.tag | trim -}}
+{{- if not $tag -}}
+  {{- if .Values.openshift.enabled -}}
+    {{- $tag = printf "%s-ubi" .Chart.AppVersion -}}
+  {{- else -}}
+    {{- $tag = .Chart.AppVersion -}}
+  {{- end -}}
+{{- end -}}
+{{- printf "%s:%s" $repo $tag -}}
 {{- end }}
 
 {{/*
@@ -213,6 +271,40 @@ If the config has controller_generated_activation_token = "env://SOMETHING_ELSE"
 {{- end -}}
 {{- else if regexMatch "controller_generated_activation_token\\s*=\\s*\"[^\"]+\"" $configNoComments -}}
 {{- fail "Invalid worker.config: when secrets are enabled (secretRefs.secretName is set), do not hardcode the activation token directly in worker.config; use env://BOUNDARY_WORKER_CONTROLLER_GENERATED_ACTIVATION_TOKEN instead." -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Validate that worker.config and tls.ops.disabled describe the same ops listener.
+The config is rendered first so the check evaluates the effective HCL values.
+*/}}
+{{- define "boundary.worker.validateConfig" -}}
+{{- $renderedConfig := tpl ((default "" .Values.worker.config) | toString) . -}}
+{{- $configNoComments := regexReplaceAll "(?m)^\\s*#.*$" $renderedConfig "" -}}
+{{- $opsBlock := regexFind "(?s)listener\\s+\"tcp\"\\s*\\{[^}]*purpose\\s*=\\s*\"ops\"[^}]*\\}" $configNoComments -}}
+{{- if and (not .Values.tls.ops.disabled) (eq $opsBlock "") -}}
+{{- fail "tls.ops.disabled=false but worker.config has no ops listener block. Add a listener with purpose=\"ops\" or set tls.ops.disabled=true." -}}
+{{- end -}}
+{{- if ne $opsBlock "" -}}
+{{- $expectedCertPath := regexQuoteMeta (printf "%s/tls.crt" .Values.tls.mountPath) -}}
+{{- $expectedKeyPath := regexQuoteMeta (printf "%s/tls.key" .Values.tls.mountPath) -}}
+{{- if and (regexMatch "tls_disable\\s*=\\s*[\"']?true[\"']?" $opsBlock) (not .Values.tls.ops.disabled) -}}
+{{- fail "worker.config ops listener has tls_disable=true but tls.ops.disabled=false. Set tls.ops.disabled=true or remove tls_disable from the ops listener." -}}
+{{- end -}}
+{{- if and (regexMatch "tls_disable\\s*=\\s*[\"']?false[\"']?" $opsBlock) .Values.tls.ops.disabled -}}
+{{- fail "worker.config ops listener has tls_disable=false but tls.ops.disabled=true. Set tls.ops.disabled=false or set tls_disable=true in the ops listener." -}}
+{{- end -}}
+{{- if and .Values.tls.ops.disabled (not (regexMatch "tls_disable\\s*=\\s*[\"']?true[\"']?" $opsBlock)) -}}
+{{- fail "tls.ops.disabled=true but the ops listener in worker.config is missing tls_disable=true. Add tls_disable=true to the ops listener." -}}
+{{- end -}}
+{{- if not .Values.tls.ops.disabled -}}
+{{- if not (regexMatch (printf "tls_cert_file\\s*=\\s*[\"']%s[\"']" $expectedCertPath) $opsBlock) -}}
+{{- fail (printf "tls.ops.disabled=false but the ops listener in worker.config is missing expected cert path %q. Keep tls_cert_file aligned with tls.mountPath." (printf "%s/tls.crt" .Values.tls.mountPath)) -}}
+{{- end -}}
+{{- if not (regexMatch (printf "tls_key_file\\s*=\\s*[\"']%s[\"']" $expectedKeyPath) $opsBlock) -}}
+{{- fail (printf "tls.ops.disabled=false but the ops listener in worker.config is missing expected key path %q. Keep tls_key_file aligned with tls.mountPath." (printf "%s/tls.key" .Values.tls.mountPath)) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end }}

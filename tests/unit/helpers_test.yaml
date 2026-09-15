@@ -68,7 +68,6 @@ tests:
     release:
       name: test-release
     set:
-      worker.service.proxy.enabled: true
     documentIndex: 0
     asserts:
       - equal:
@@ -81,7 +80,6 @@ tests:
     release:
       name: test-release
     set:
-      worker.service.ops.enabled: true
     documentIndex: 1
     asserts:
       - equal:

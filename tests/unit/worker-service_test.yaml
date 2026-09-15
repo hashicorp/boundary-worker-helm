@@ -10,7 +10,6 @@ tests:
   
   - it: should configure proxy service with all options
     set:
-      worker.service.proxy.enabled: true
       worker.service.proxy.type: LoadBalancer
       worker.service.proxy.port: 8080
       worker.service.proxy.targetPort: 8080
@@ -42,7 +41,6 @@ tests:
     release:
       name: test-release
     set:
-      worker.service.proxy.enabled: true
     documentIndex: 0
     asserts:
       - equal:
@@ -57,7 +55,6 @@ tests:
 
   - it: should filter AWS annotations for non-LoadBalancer proxy service types
     set:
-      worker.service.proxy.enabled: true
       worker.service.proxy.type: ClusterIP
       worker.service.proxy.annotations:
         service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
@@ -88,7 +85,6 @@ tests:
   
   - it: should configure ops service with all options
     set:
-      worker.service.ops.enabled: true
       worker.service.ops.type: ClusterIP
       worker.service.ops.port: 8081
       worker.service.ops.targetPort: 8081
@@ -116,7 +112,6 @@ tests:
     release:
       name: test-release
     set:
-      worker.service.ops.enabled: true
     documentIndex: 1
     asserts:
       - equal:
@@ -130,32 +125,10 @@ tests:
           value: worker
 
   # ============================================================================
-  # CONDITIONAL RENDERING TESTS
+  # REQUIRED SERVICE TESTS
   # ============================================================================
-  
-  - it: should not create services when both disabled
-    set:
-      worker.service.proxy.enabled: false
-      worker.service.ops.enabled: false
-    asserts:
-      - hasDocuments:
-          count: 0
 
-  - it: should create only proxy service when ops disabled
-    set:
-      worker.service.proxy.enabled: true
-      worker.service.ops.enabled: false
-    asserts:
-      - hasDocuments:
-          count: 1
-      - isKind:
-          of: Service
-        documentIndex: 0
-
-  - it: should create both services when enabled
-    set:
-      worker.service.proxy.enabled: true
-      worker.service.ops.enabled: true
+  - it: should always create both services
     asserts:
       - hasDocuments:
           count: 2
@@ -170,8 +143,6 @@ tests:
     release:
       namespace: custom-namespace
     set:
-      worker.service.proxy.enabled: true
-      worker.service.ops.enabled: true
     asserts:
       - equal:
           path: metadata.namespace
@@ -181,3 +152,37 @@ tests:
           path: metadata.namespace
           value: custom-namespace
         documentIndex: 1
+
+  # ============================================================================
+  # OPENSHIFT SERVICE TESTS
+  # ============================================================================
+
+  - it: renders proxy service as ClusterIP when configured for OpenShift
+    set:
+      worker.service.proxy.type: ClusterIP
+      openshift.enabled: true
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: should use configured type for proxy service when openshift.enabled is false
+    set:
+      worker.service.proxy.type: LoadBalancer
+      openshift.enabled: false
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.type
+          value: LoadBalancer
+
+  - it: should keep ops service type unchanged when openshift.enabled is true
+    set:
+      worker.service.ops.type: ClusterIP
+      openshift.enabled: true
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP

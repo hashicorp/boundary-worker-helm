@@ -1,6 +1,6 @@
 # Copyright IBM Corp. 2026
 
-{{- if and .Values.worker .Values.worker.service.ops.enabled }}
+{{- if .Values.worker }}
 apiVersion: v1
 kind: Pod
 metadata:
