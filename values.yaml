@@ -22,9 +22,9 @@ imagePullSecrets: []
 
 tls:
   ops:
-    disabled: true
-  secretName: ""
-  mountPath: ""
+    disabled: false
+  secretName: "boundary-worker-tls"
+  mountPath: "/etc/boundary/tls"
 
 # ---------------------------------------------------------------------------
 # Secret References
@@ -205,11 +205,13 @@ openshift:
       enabled: true
       host: ""
       annotations: {}
+      labels: {}
     ops:
       enabled: true
       host: ""
       tls:
-        termination: edge
+        termination: reencrypt
         insecureEdgeTerminationPolicy: Redirect
         destinationCACertificate: ""
       annotations: {}
+      labels: {}

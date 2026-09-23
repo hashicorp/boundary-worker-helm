@@ -161,6 +161,38 @@ tests:
           path: metadata.annotations["haproxy.router.openshift.io/timeout"]
           value: "2h"
 
+  - it: should merge custom labels into the proxy Route
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: true
+      openshift.route.proxy.labels:
+        route-shard: private
+      openshift.route.ops.enabled: false
+    asserts:
+      - equal:
+          path: metadata.labels["route-shard"]
+          value: private
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: worker
+
+  - it: should merge custom labels into the ops Route
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.labels:
+        route-shard: private
+      tls.ops.disabled: false
+      openshift.route.ops.tls.termination: reencrypt
+    asserts:
+      - equal:
+          path: metadata.labels["route-shard"]
+          value: private
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: worker
+
   - it: should use the release namespace
     release:
       namespace: boundary-prod

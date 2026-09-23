@@ -276,6 +276,9 @@
         },
         "annotations": {
           "type": "object"
+        },
+        "labels": {
+          "type": "object"
         }
       }
     },
@@ -313,6 +316,9 @@
           }
         },
         "annotations": {
+          "type": "object"
+        },
+        "labels": {
           "type": "object"
         }
       }
