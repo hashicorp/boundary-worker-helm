@@ -525,6 +525,7 @@ acceptance-helm:
 		--set worker.persistence.recording.storageClass=standard \
 		--set worker.persistence.authStorage.enabled=true \
 		--set worker.persistence.authStorage.storageClass=standard \
+		--set tls.ops.disabled=true \
 		--set-file worker.config=worker.hcl \
 		--timeout 5m
 	@echo "✅ Helm chart installed successfully"
@@ -1168,6 +1169,7 @@ eks-helm:
 			--set worker.service.proxy.type=LoadBalancer \
 			--set worker.persistence.recording.storageClass=gp3 \
 			--set worker.persistence.authStorage.storageClass=gp3 \
+			--set tls.ops.disabled=true \
 			--set-file worker.config=worker.hcl \
 			--timeout 10m \
 			--rollback-on-failure; \
@@ -1352,6 +1354,7 @@ aks-helm:
 			--set worker.service.proxy.type=LoadBalancer \
 			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
 			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+			--set tls.ops.disabled=true \
 			--set-file worker.config=worker.hcl \
 			--timeout 10m \
 			--rollback-on-failure; \
@@ -1575,6 +1578,7 @@ gke-helm:
 			--set worker.service.proxy.type=LoadBalancer \
 			--set worker.persistence.recording.storageClass=$${STORAGE_CLASS} \
 			--set worker.persistence.authStorage.storageClass=$${STORAGE_CLASS} \
+			--set tls.ops.disabled=true \
 			--set-file worker.config=worker.hcl \
 			--timeout 10m \
 			--rollback-on-failure; \
