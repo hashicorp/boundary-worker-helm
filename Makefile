@@ -499,7 +499,7 @@ worker-config:
 	fi; \
 	echo ""; \
 	echo "Generating worker configuration from template..."; \
-	sed -e "s|<activation-token>|$$ACTIVATION_TOKEN|g" -e "s|<cluster-id>|$$BOUNDARY_CLUSTER_ID|g" scripts/worker-template.hcl > worker.hcl; \
+	sed -e "s|<activation-token>|$$ACTIVATION_TOKEN|g" -e "s|<cluster-id>|$$BOUNDARY_CLUSTER_ID|g" tests/acceptance/worker-template.hcl > worker.hcl; \
 	echo "✅ Created worker config"
 
 acceptance-helm:

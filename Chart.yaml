@@ -5,7 +5,7 @@ apiVersion: v2
 name: boundary-worker
 description: Official HashiCorp Boundary Worker Chart
 type: application
-version: 0.2.0-beta
+version: 0.2.0
 appVersion: "1.0.2-ent"
 keywords:
   - boundary
@@ -20,12 +20,16 @@ icon: https://raw.githubusercontent.com/hashicorp/boundary/main/boundary.png
 sources:
   - https://github.com/hashicorp/boundary-worker-helm
 annotations:
-  artifacthub.io/prerelease: "true"
+  artifacthub.io/prerelease: "false"
   artifacthub.io/changes: |
     - kind: added
       description: Add OpenShift support with configurable proxy and operations Routes, including operations Route TLS termination and destination CA support.
     - kind: added
       description: Add operations listener TLS configuration and TLS consistency validation.
+    - kind: added
+      description: Add client-facing certificate fields for the OpenShift operations Route.
+    - kind: added
+      description: Add extra volumes, extra volume mounts, and extra manifests passthrough support.
     - kind: changed
       description: Always render proxy and operations Services with configurable Service types.
     - kind: changed
