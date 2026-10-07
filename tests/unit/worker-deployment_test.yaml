@@ -483,6 +483,7 @@ tests:
   - it: should append extra volumes and volume mounts
     template: worker-deployment.yaml
     set:
+      tls.ops.disabled: true
       extraVolumes:
         - name: custom-ca
           configMap:
@@ -525,6 +526,8 @@ tests:
 
   - it: should omit extra volume entries by default
     template: worker-deployment.yaml
+    set:
+      tls.ops.disabled: true
     asserts:
       - isNull:
           path: spec.template.spec.containers[0].volumeMounts[5]
