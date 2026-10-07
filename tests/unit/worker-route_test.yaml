@@ -110,6 +110,93 @@ tests:
           path: spec.tls.destinationCACertificate
           pattern: "BEGIN CERTIFICATE"
 
+  - it: should configure custom ops Route certificates for edge termination
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.tls:
+        termination: edge
+        key: |
+          -----BEGIN PRIVATE KEY-----
+          key-data
+          -----END PRIVATE KEY-----
+        certificate: |
+          -----BEGIN CERTIFICATE-----
+          certificate-data
+          -----END CERTIFICATE-----
+        caCertificate: |
+          -----BEGIN CERTIFICATE-----
+          ca-data
+          -----END CERTIFICATE-----
+    asserts:
+      - matchRegex:
+          path: spec.tls.key
+          pattern: "BEGIN PRIVATE KEY"
+      - matchRegex:
+          path: spec.tls.certificate
+          pattern: "certificate-data"
+      - matchRegex:
+          path: spec.tls.caCertificate
+          pattern: "ca-data"
+
+  - it: should configure custom ops Route certificates for reencrypt termination
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.tls:
+        termination: reencrypt
+        key: route-key
+        certificate: route-certificate
+        caCertificate: route-ca
+    asserts:
+      - matchRegex:
+          path: spec.tls.key
+          pattern: route-key
+      - matchRegex:
+          path: spec.tls.certificate
+          pattern: route-certificate
+      - matchRegex:
+          path: spec.tls.caCertificate
+          pattern: route-ca
+
+  - it: should omit custom certificates for passthrough ops termination
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.tls:
+        termination: passthrough
+        key: route-key
+        certificate: route-certificate
+        caCertificate: route-ca
+    asserts:
+      - isNull:
+          path: spec.tls.key
+      - isNull:
+          path: spec.tls.certificate
+      - isNull:
+          path: spec.tls.caCertificate
+
+  - it: should omit empty custom ops Route certificates
+    set:
+      openshift.enabled: true
+      openshift.route.proxy.enabled: false
+      openshift.route.ops.enabled: true
+      openshift.route.ops.tls:
+        termination: edge
+        key: ""
+        certificate: ""
+        caCertificate: ""
+    asserts:
+      - isNull:
+          path: spec.tls.key
+      - isNull:
+          path: spec.tls.certificate
+      - isNull:
+          path: spec.tls.caCertificate
+
   - it: should not set spec.host when host is empty
     set:
       openshift.enabled: true
