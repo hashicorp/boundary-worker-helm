@@ -249,6 +249,7 @@ install_helm_chart() {
         --set worker.service.proxy.type=NodePort \
         --set worker.persistence.recording.storageClass=standard \
         --set worker.persistence.authStorage.storageClass=standard \
+        --set tls.ops.disabled=true \
         --set-file worker.config="${CHART_DIR}/worker.hcl" \
         "${image_flags[@]+"${image_flags[@]}"}" \
         --timeout 5m >${HELM_OUT} 2>&1; then
