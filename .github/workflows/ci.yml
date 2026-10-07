@@ -1,25 +1,41 @@
 name: Helm Chart CI
-
 on:
-  push:
-    branches:
-      - main
-      - 'release/**'
   pull_request:
     branches:
       - main
       - 'release/**'
-    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/**'
+      - 'scripts/**'
+      - 'templates/**'
+      - 'tests/**'
+      - 'Chart.yaml'
+      - 'Makefile'
+      - 'values.schema.json'
+      - 'values.yaml'
   workflow_dispatch:
     inputs:
-      run_acceptance:
-        description: "Run acceptance tests"
-        type: boolean
-        default: false
       k8s_versions:
-        description: "Optional explicit Kubernetes versions (comma-separated, e.g. v1.31.0,v1.30.0). Leave blank to use the K8S_MATRIX_VERSIONS repository variable."
+        description: "Optional explicit Kubernetes versions (comma-separated, e.g. v1.36.1,v1.35.5,v1.34.8)"
         required: false
         default: ""
+  push:
+    branches:
+      - main
+      - 'release/**'
+    paths:
+      - '.github/**'
+      - 'scripts/**'
+      - 'templates/**'
+      - 'tests/**'
+      - 'Chart.yaml'
+      - 'Makefile'
+      - 'values.schema.json'
+      - 'values.yaml'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -91,7 +107,7 @@ jobs:
   unit-test:
     name: Unit Test
     runs-on: ubuntu-latest
-    needs: [lint, security]
+    needs: lint
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -137,12 +153,6 @@ jobs:
           echo "✅ All tests completed successfully!"
           echo "================================"
 
-  # ---------------------------------------------------------------------------
-  # Resolve the Kubernetes versions to test into a JSON array consumed by the
-  # acceptance-test matrix below. The workflow_dispatch input takes precedence,
-  # otherwise the repository variable K8S_MATRIX_VERSIONS (ordered kindest/node
-  # tags) is used. Fails if neither is set.
-  # ---------------------------------------------------------------------------
   acceptance-matrix:
     name: Acceptance Matrix
     if: |
@@ -161,8 +171,8 @@ jobs:
           INPUT_K8S_VERSIONS: ${{ github.event.inputs.k8s_versions || '' }}
           REPO_K8S_MATRIX_VERSIONS: ${{ vars.K8S_MATRIX_VERSIONS }}
         run: |
-          # Configure the K8S_MATRIX_VERSIONS repository variable with ordered
-          # kindest/node tags. Available tags: https://hub.docker.com/r/kindest/node
+          # Configure repository variables with ordered kindest/node tags.
+          # Available tags: https://hub.docker.com/r/kindest/node
           raw_versions="${INPUT_K8S_VERSIONS:-${REPO_K8S_MATRIX_VERSIONS:-}}"
           normalized_versions="$(echo "${raw_versions}" | tr ',' ' ' | xargs)"
           if [ -z "${normalized_versions}" ]; then
@@ -181,13 +191,6 @@ jobs:
           echo "versions=${json}" >> "${GITHUB_OUTPUT}"
           echo "Resolved acceptance matrix: ${json}"
 
-  # ---------------------------------------------------------------------------
-  # One isolated runner per Kubernetes version. fail-fast: false so a failure in
-  # one version does not cancel the others. make k8s-matrix-test (driven by
-  # K8S_VERSIONS) creates a cluster pinned to kindest/node:<version>, generates
-  # worker.hcl, installs the chart, runs the session test, then tears down
-  # (including ID-scoped Boundary worker cleanup).
-  # ---------------------------------------------------------------------------
   acceptance-test:
     name: Acceptance Test (${{ matrix.k8s_version }})
     if: |
@@ -209,7 +212,6 @@ jobs:
       BOUNDARY_PASSWORD: ${{ secrets.BOUNDARY_PASSWORD }}
       BOUNDARY_TARGET_ID: ${{ secrets.BOUNDARY_TARGET_ID }}
       BOUNDARY_BYOW_IMAGE: ${{ secrets.BOUNDARY_BYOW_IMAGE }}
-      # Selects the kindest/node image the matrix script pins the cluster to.
       K8S_VERSIONS: ${{ matrix.k8s_version }}
     steps:
       - name: Checkout code
@@ -226,20 +228,19 @@ jobs:
         run: make acceptance-cleanup
 
   # ---------------------------------------------------------------------------
-  # OpenShift acceptance test using MicroShift AIO — same pattern as
-  # acceptance-test uses KIND. A throwaway OCP cluster starts inside Docker on
-  # the GitHub runner. No external OCP cluster, CRC, or OCP_SERVER/OCP_TOKEN
-  # secrets are required.
+  # OpenShift acceptance test using MicroShift AIO — self-contained OCP cluster
+  # inside Docker on the GitHub runner. No external OCP cluster, CRC, or
+  # OCP_SERVER/OCP_TOKEN secrets required.
   # ---------------------------------------------------------------------------
   openshift-acceptance-test:
     name: OpenShift Acceptance Test (MicroShift)
-    runs-on: ubuntu-latest
-    needs: [unit-test, security]
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
        (github.base_ref == 'main' || startsWith(github.base_ref, 'release/')) &&
        github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    needs: [unit-test, security]
     env:
       BOUNDARY_ADDR: ${{ secrets.BOUNDARY_ADDR }}
       BOUNDARY_AUTH_METHOD_ID: ${{ secrets.BOUNDARY_AUTH_METHOD_ID }}
@@ -263,10 +264,10 @@ jobs:
           sudo apt update && sudo apt install -y boundary
           boundary version
 
-      - name: Setup MicroShift acceptance environment
+      - name: Setup MicroShift cluster
         run: make microshift-setup
 
-      - name: Run OpenShift acceptance test
+      - name: Run Full MicroShift Acceptance Workflow
         run: make microshift-full
 
       - name: Cleanup
