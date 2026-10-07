@@ -69,7 +69,7 @@ worker:
         type = ["worker", "egress"]
       }
 
-      controller_generated_activation_token = "controller-led-activation-token-here" # Optional: set when using controller-led worker registration. Requires setting the token value via Kubernetes Secret and referencing it with worker.extraEnv or worker.secretRefs. If not set, the worker will attempt to register without a token, which only works if the Boundary Controller is configured to allow tokenless registration. See docs/OPERATIONS.md for the three ways to supply the token.
+      controller_generated_activation_token = "controller-led-activation-token-here" # Optional: set when using controller-led worker registration. Requires setting the token value via Kubernetes Secret and referencing it with worker.extraEnv or worker.secretRefs.
     }
 
     events {
@@ -180,6 +180,9 @@ nodeSelector: {}
 affinity: {}
 tolerations: []
 extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+extraManifests: []
 
 # ---------------------------------------------------------------------------
 # OpenShift
@@ -212,6 +215,9 @@ openshift:
       tls:
         termination: reencrypt
         insecureEdgeTerminationPolicy: Redirect
+        key: ""
+        certificate: ""
+        caCertificate: ""
         destinationCACertificate: ""
       annotations: {}
       labels: {}

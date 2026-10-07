@@ -53,5 +53,8 @@ openshift:
         # edge (not reencrypt) because the ops listener above serves plaintext HTTP in this test environment.
         termination: edge
         insecureEdgeTerminationPolicy: Redirect
+        key: ""
+        certificate: ""
+        caCertificate: ""
         destinationCACertificate: ""
       annotations: {}

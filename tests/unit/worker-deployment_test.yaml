@@ -480,6 +480,57 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts[4].name
           value: recording-storage
 
+  - it: should append extra volumes and volume mounts
+    template: worker-deployment.yaml
+    set:
+      extraVolumes:
+        - name: custom-ca
+          configMap:
+            name: organization-ca
+        - name: kms-credentials
+          secret:
+            secretName: boundary-kms-credentials
+      extraVolumeMounts:
+        - name: custom-ca
+          mountPath: /etc/ssl/custom-ca
+          readOnly: true
+        - name: kms-credentials
+          mountPath: /etc/boundary/kms
+          readOnly: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].name
+          value: custom-ca
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].mountPath
+          value: /etc/ssl/custom-ca
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[5].readOnly
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[6].name
+          value: kms-credentials
+      - equal:
+          path: spec.template.spec.volumes[5].name
+          value: custom-ca
+      - equal:
+          path: spec.template.spec.volumes[5].configMap.name
+          value: organization-ca
+      - equal:
+          path: spec.template.spec.volumes[6].name
+          value: kms-credentials
+      - equal:
+          path: spec.template.spec.volumes[6].secret.secretName
+          value: boundary-kms-credentials
+
+  - it: should omit extra volume entries by default
+    template: worker-deployment.yaml
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].volumeMounts[5]
+      - isNull:
+          path: spec.template.spec.volumes[5]
+
   - it: should use emptyDir for auth-storage volume when auth PVC disabled
     template: worker-deployment.yaml
     set:

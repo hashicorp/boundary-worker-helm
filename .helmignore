@@ -26,6 +26,7 @@ scripts/
 /tests/
 local-values.yaml
 my-values.yaml
+my-values.*.yaml
 worker.hcl
 .env
 .terraform/
