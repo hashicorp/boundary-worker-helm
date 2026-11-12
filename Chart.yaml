@@ -5,8 +5,8 @@ apiVersion: v2
 name: boundary-worker
 description: Official HashiCorp Boundary Worker Chart
 type: application
-version: 0.2.0
-appVersion: "1.0.2-ent"
+version: 0.2.1
+appVersion: "1.1.1-ent"
 keywords:
   - boundary
   - hashicorp
@@ -38,6 +38,8 @@ annotations:
       description: Updated the chart to Boundary Enterprise 1.0.2-ent.
     - kind: removed
       description: Remove chart-managed ServiceAccount creation.
+    - kind: changed
+      description: Updated the default Boundary Enterprise version to 1.1.1-ent.
 maintainers:
   - name: HashiCorp
     url: https://github.com/hashicorp/boundary-worker-helm
